@@ -1,0 +1,103 @@
+{
+  "private": true,
+  "name": "@dedis/cothority",
+  "version": "3.4.5",
+  "description": "A typescript implementation of the cothority",
+  "main": "index.js",
+  "browser": "bundle.min.js",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/dedis/cothority.git"
+  },
+  "types": "index.d.ts",
+  "scripts": {
+    "build": "npm run protobuf && tsc",
+    "linter": "tslint 'src/{,**/}*.ts' 'spec/{,**/}*.ts' && prettier --check *.html",
+    "linter:fix": "tslint --fix 'src/{,**/}*.ts' 'spec/{,**/}*.ts' && prettier --write *.html",
+    "test": "npm run linter && npm run cover",
+    "test:nocover": "ts-node node_modules/jasmine/bin/jasmine.js",
+    "cover": "node_modules/.bin/nyc --reporter=lcov --reporter=text node_modules/jasmine/bin/jasmine.js",
+    "coveralls": "cat ./coverage/lcov.info | coveralls",
+    "bundle": "node node_modules/.bin/webpack",
+    "doc": "node_modules/.bin/typedoc --out doc/ src/",
+    "protobuf": "node scripts/build_proto.js",
+    "test-publish": "npm test && ./publish.sh",
+    "link": "./publish.sh --link"
+  },
+  "keywords": [
+    "cothority",
+    "network"
+  ],
+  "author": "DEDIS",
+  "license": "LGPL-3.0-or-later",
+  "dependencies": {
+    "@babel/polyfill": "^7.2.5",
+    "@dedis/kyber": "^3.4.2",
+    "@stablelib/blake2xs": "^0.10.4",
+    "buffer": "^5.2.1",
+    "crypto-browserify": "^3.12.0",
+    "isomorphic-ws": "^4.0.1",
+    "keccak": "^3.0.0",
+    "lodash": "^4.17.15",
+    "long": "^4.0.0",
+    "moment": "^2.24.0",
+    "protobufjs": "^6.8.8",
+    "pure-uuid": "^1.5.5",
+    "rxjs": "^6.5.5",
+    "shuffle-array": "^1.0.1",
+    "sprintf-js": "^1.1.2",
+    "toml": "^2.3.5",
+    "tslib": "^1.10.0",
+    "util": "^0.11.1",
+    "ws": "^6.1.2"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.2.2",
+    "@babel/preset-env": "^7.3.1",
+    "@types/bn.js": "^4.11.4",
+    "@types/crypto-js": "^3.1.43",
+    "@types/dockerode": "^2.5.11",
+    "@types/jasmine": "^3.3.5",
+    "@types/lodash": "^4.14.139",
+    "@types/long": "^4.0.0",
+    "@types/node": "^12.7.12",
+    "@types/shuffle-array": "0.0.28",
+    "@types/sprintf-js": "^1.1.1",
+    "@types/url-parse": "^1.4.3",
+    "@types/ws": "^6.0.1",
+    "babel-loader": "^8.0.5",
+    "coveralls": "^3.0.2",
+    "dockerode": "^2.5.8",
+    "file": "^0.2.2",
+    "jasmine": "^3.3.1",
+    "jasmine-console-reporter": "^3.1.0",
+    "nyc": "^13.3.0",
+    "prettier": "^1.19.1",
+    "ts-loader": "^5.3.3",
+    "ts-node": "^8.0.1",
+    "tslint": "^5.12.1",
+    "typedoc": "^0.15.0",
+    "typescript": "^3.6.4",
+    "webpack": "^4.29.1",
+    "webpack-cli": "^3.2.3"
+  },
+  "nyc": {
+    "all": true,
+    "extension": [
+      ".ts"
+    ],
+    "exclude": [
+      "spec/**/*",
+      "**/*.d.ts",
+      "**/*.config.js",
+      "coverage/**/*",
+      "dist/**/*",
+      "doc/**/*",
+      "scripts/**/*",
+      "src/darc/signer.ts"
+    ],
+    "require": [
+      "ts-node/register"
+    ]
+  }
+}

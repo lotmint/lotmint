@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "downlevelIteration": true,
+    "outDir": "./dist/",
+    "module": "commonjs",
+    "target": "es6",
+    "noImplicitAny": true,
+    "moduleResolution": "node",
+    "declaration": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "importHelpers": true,
+    "typeRoots": [
+      "../types",
+      "./node_modules/@types"
+    ]
+  },
+  "include": [
+    "src/**/*"
+  ]
+}

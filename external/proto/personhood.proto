@@ -1,0 +1,119 @@
+syntax = "proto2";
+package personhood;
+
+import "byzcoin.proto";
+
+option java_package = "ch.epfl.dedis.lib.proto";
+option java_outer_classname = "Personhood";
+
+// RoPaSci represents one rock-paper-scissors game.
+message RoPaSci {
+  required bytes byzcoinid = 1;
+  required bytes ropasciid = 2;
+  optional sint64 locked = 3;
+}
+
+// RoPaSciStruct holds one Rock Paper Scissors event
+message RoPaSciStruct {
+  required string description = 1;
+  required byzcoin.Coin stake = 2;
+  required bytes firstplayerhash = 3;
+  optional sint32 firstplayer = 4;
+  optional sint32 secondplayer = 5;
+  optional bytes secondplayeraccount = 6;
+  optional bytes firstplayeraccount = 7;
+  optional bytes calypsowrite = 8;
+  optional bytes calypsoread = 9;
+}
+
+// CredentialStruct holds a slice of credentials.
+message CredentialStruct {
+  repeated Credential credentials = 1;
+}
+
+// Credential represents one identity of the user.
+message Credential {
+  required string name = 1;
+  repeated Attribute attributes = 2;
+}
+
+// Attribute stores one specific attribute of a credential.
+message Attribute {
+  required string name = 1;
+  required bytes value = 2;
+}
+
+// SpawnerStruct holds the data necessary for knowing how much spawning
+// of a certain contract costs.
+message SpawnerStruct {
+  required byzcoin.Coin costdarc = 1;
+  required byzcoin.Coin costcoin = 2;
+  required byzcoin.Coin costcredential = 3;
+  required byzcoin.Coin costparty = 4;
+  required bytes beneficiary = 5;
+  optional byzcoin.Coin costropasci = 6;
+  optional byzcoin.Coin costcwrite = 7;
+  optional byzcoin.Coin costcread = 8;
+  optional byzcoin.Coin costvalue = 9;
+}
+
+// PopPartyStruct is the data that is stored in a pop-party instance.
+message PopPartyStruct {
+  // State has one of the following values:
+  // 1: it is a configuration only
+  // 2: scanning in progress
+  // 3: it is a finalized pop-party
+  required sint32 state = 1;
+  // Organizers is the number of organizers responsible for this party
+  required sint32 organizers = 2;
+  // Finalizations is a slice of darc-identities who agree on the list of
+  // public keys in the FinalStatement.
+  repeated string finalizations = 3;
+  // Description holds the name, date and location of the party and is available
+  // before the barrier point.
+  required PopDesc description = 4;
+  // Attendees is the slice of public keys of all confirmed attendees
+  required Attendees attendees = 5;
+  // Miners holds all tags of the linkable ring signatures that already
+  // mined this party.
+  repeated LRSTag miners = 6;
+  // How much money to mine
+  required uint64 miningreward = 7;
+  // Previous is the link to the instanceID of the previous party, it can be
+  // nil for the first party.
+  optional bytes previous = 8;
+  // Next is a link to the instanceID of the next party. It can be
+  // nil if there is no next party.
+  optional bytes next = 9;
+}
+
+// PopDesc holds the name, date and a roster of all involved conodes.
+message PopDesc {
+  // Name of the party.
+  required string name = 1;
+  // Purpose of the party
+  required string purpose = 2;
+  // DateTime of the party. It is stored as seconds since the Unix-epoch, 1/1/1970
+  required uint64 datetime = 3;
+  // Location of the party
+  required string location = 4;
+}
+
+// FinalStatement is the final configuration holding all data necessary
+// for a verifier.
+message FinalStatement {
+  // Desc is the description of the pop-party.
+  optional PopDesc desc = 1;
+  // Attendees holds a slice of all public keys of the attendees.
+  required Attendees attendees = 2;
+}
+
+// Attendees is a slice of points of attendees' public keys.
+message Attendees {
+  repeated bytes keys = 1;
+}
+
+// LRSTag is the tag of the linkable ring signature sent in by a user.
+message LRSTag {
+  required bytes tag = 1;
+}

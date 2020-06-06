@@ -1,0 +1,134 @@
+syntax = "proto2";
+package calypso;
+import "byzcoin.proto";
+import "onet.proto";
+
+option java_package = "ch.epfl.dedis.lib.proto";
+option java_outer_classname = "Calypso";
+
+// ***
+// Common structures
+// ***
+
+// Write is the data stored in a write instance. It stores a reference to the LTS
+// used and the encrypted secret.
+message Write {
+  // Data should be encrypted by the application under the symmetric key
+  // in U and C
+  required bytes data = 1;
+  // U is the encrypted random value for the ElGamal encryption
+  required bytes u = 2;
+  // Ubar, E and f will be used by the server to verify the writer did
+  // correctly encrypt the key. It binds the policy (the darc) with the
+  // cyphertext.
+  // Ubar is used for the log-equality proof
+  required bytes ubar = 3;
+  // E is the non-interactive challenge as scalar
+  required bytes e = 4;
+  // f is the proof - written in uppercase here so it is an exported
+  // field, but in the OCS-paper it's lowercase.
+  required bytes f = 5;
+  // C is the ElGamal parts for the symmetric key material (might also
+  // contain an IV)
+  required bytes c = 6;
+  // ExtraData is clear text and application-specific
+  optional bytes extradata = 7;
+  // LTSID points to the identity of the lts group
+  required bytes ltsid = 8;
+  // Cost reflects how many coins you'll have to pay for a read-request
+  optional byzcoin.Coin cost = 9;
+}
+
+// Read is the data stored in a read instance. It has a pointer to the write
+// instance and the public key used to re-encrypt the secret to.
+message Read {
+  required bytes write = 1;
+  required bytes xc = 2;
+}
+
+// ***
+// These are the messages used in the API-calls
+// ***
+
+// Authorise adds a ByzCoinID to the list of authorized IDs.
+// Deprecated: please use Authorize.
+message Authorise {
+  required bytes byzcoinid = 1;
+}
+
+// AuthoriseReply is returned upon successful authorization
+// Deprecated: please use AuthorizeReply
+message AuthoriseReply {
+}
+
+// Authorize is used to add the given ByzCoinID into the list of
+// authorised IDs. To be accepted, the ByzCoinID must be signed
+// using the private key of the conode.
+message Authorize {
+  required bytes byzcoinid = 1;
+  optional sint64 timestamp = 2;
+  optional bytes signature = 3;
+}
+
+// AuthorizeReply is returned upon successful authorisation.
+message AuthorizeReply {
+}
+
+// CreateLTS is used to start a DKG and store the private keys in each node.
+// Prior to using this request, the Calypso roster must be recorded on the
+// ByzCoin blockchain in the instance specified by InstanceID.
+message CreateLTS {
+  required byzcoin.Proof proof = 1;
+}
+
+// CreateLTSReply is returned upon successfully setting up the distributed
+// key.
+message CreateLTSReply {
+  required bytes byzcoinid = 1;
+  required bytes instanceid = 2;
+  // X is the public key of the LTS.
+  required bytes x = 3;
+}
+
+// ReshareLTS is used to update the LTS shares. Prior to using this request,
+// the Calypso roster must be updated on the ByzCoin blockchain in the instance
+// specified by InstanceID.
+message ReshareLTS {
+  required byzcoin.Proof proof = 1;
+}
+
+// ReshareLTSReply is returned upon successful resharing. The LTSID and the
+// public key X should remain the same.
+message ReshareLTSReply {
+}
+
+// DecryptKey is sent by a reader after he successfully stored a 'Read' request
+// in byzcoin Client.
+message DecryptKey {
+  // Read is the proof that he has been accepted to read the secret.
+  required byzcoin.Proof read = 1;
+  // Write is the proof containing the write request.
+  required byzcoin.Proof write = 2;
+}
+
+// DecryptKeyReply is returned if the service verified successfully that the
+// decryption request is valid.
+message DecryptKeyReply {
+  // C is the secret re-encrypted under the reader's public key.
+  required bytes c = 1;
+  // XhatEnc is the random part of the encryption.
+  required bytes xhatenc = 2;
+  // X is the aggregate public key of the LTS used.
+  required bytes x = 3;
+}
+
+// GetLTSReply asks for the shared public key of the corresponding LTSID
+message GetLTSReply {
+  // LTSID is the id of the LTS instance created.
+  required bytes ltsid = 1;
+}
+
+// LtsInstanceInfo is the information stored in an LTS instance.
+message LtsInstanceInfo {
+  required onet.Roster roster = 1;
+}

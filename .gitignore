@@ -1,0 +1,24 @@
+.idea/*
+.DS_Store
+profile.cov
+conode/conode
+conode/co[0-9]*/
+conode/public.toml
+conode/log
+conode/tmp
+status/status
+scmgr/scmgr
+cisc/cisc
+cosi/simulation/build/
+cosi/simulation/test_data/
+external/java/bin
+external/java/.project
+*~
+.tags*
+**/build/
+.vscode
+*.db
+*.cfg
+
+# cloned
+/Coding
