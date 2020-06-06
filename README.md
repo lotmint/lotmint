@@ -10,11 +10,9 @@ We present LotMint, a permissionless blockchain, with a purposely low set bar fo
 
 The LotMint blockchain has made a number of changes to ByzCoin. Below we describe the LotMint blockchain with changes from ByzCoin being explained, and important security properties analyzed in enumeration.
 
-1. The ﬁrst and the most important change is on the block mining mechanism. In LotMint, block mining shall use the decentralized clock enabled time throttle mechanism
+1. The ﬁrst and the most important change is on the block mining mechanism. In LotMint, block mining shall use the decentralized clock enabled time throttle mechanism that we have described in Section 4. Each new epoch begins with a mining competition where the reference block RB that the miners follow is the latest won time block TB. The deﬁnition of TB shall be described in Item 9 of our enumeration description. A mining success output, which we shall follow ByzCoin’s (and Bitcoin-NG’s) naming of their “KeyBlocks”, to name it a “KeyBlock Transaction”, and denote it by KB TX. Notice that treating PoW mining blocks as transactions to disseminate in the network is novel in BFT+blockchain technologies. Thanks to our DT time-throttle control, the number of KB TXs in dissemination can be well controlled not to congest the network.
 
-![LotMint Figure 2](https://raw.githubusercontent.com/lotmint/lotmint/master/lotmint/figure2.png)
-
-that we have described in Section 4. Each new epoch begins with a mining competition where the reference block RB that the miners follow is the latest won time block TB. The deﬁnition of TB shall be described in Item 9 of our enumeration description. A mining success output, which we shall follow ByzCoin’s (and Bitcoin-NG’s) naming of their “KeyBlocks”, to name it a “KeyBlock Transaction”, and denote it by KB TX. Notice that treating PoW mining blocks as transactions to disseminate in the network is novel in BFT+blockchain technologies. Thanks to our DT time-throttle control, the number of KB TXs in dissemination can be well controlled not to congest the network.
+![LotMint Figure 2](https://lotmint.io/wp-content/uploads/2020/06/figure2.png)
 
 2. After elapsing of ∆ interval of time (see Section 3.4 for the meaning of ∆) from the earliest written self-claimed broadcast time in one of the competing KB TXs, the network shall become with absence of KB TX. The current BFT leader shall propose a ByzCoin CoSi tree to try to have all competing KB TXs to be BFT quorum approved to enter the blockchain. Upon reaching the BFT quorum consensus, the root of this CoSi tree becomes the new reference block RB for to be referenced by a new round of mining competition.
 
