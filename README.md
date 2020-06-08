@@ -4,13 +4,43 @@ Blockchain Returning to Decentralization with Decentralized Clock, forked from d
 
 ## Abstract
 
-We present LotMint, a permissionless blockchain, with a purposely low set bar for Proof-of-Work (PoW) diﬃculty. Our objective is for personal computers, cloud virtual machines or containers, even mobile devices, and hopefully future IoT devices, to become the main, widely distributed, collectively much securer, fairer, more reliable and economically sustainable mining workforce for blockchains. An immediate question arises: how to prevent the permissionless network from ﬂooding of block dissemination traﬃc by a massive number of proﬁt enthusiastic miners? We propose a novel notion of Decentralized Time (DT) as global and logical time which can be agreed as a network consensus. Our construction of DT practically uses distributed private clocks of the participation nodes. A node with DT upon creating or hearing a block can see how unluckily long or luckily short time the block has taken to have been mined plus traveled through the network. They can “time throttle” a potentially large number of unluckily mined/travelled blocks. The luckier blocks passing through the time throttle are treated as time-tie forks with a volume being “throttle diameter” adjustably controlled not to congest the network. With the number of time-tie forks being computationally manageable, it is then easy to break-tie selecting a winner, and even orderly queuing a plural number of them for a “multi-core” eﬃcient way of using the winners. We provide succinct and evident analyses of necessary properties for the LotMint blockchain including: decentralization, energy saving, safety, liveness, robustness, fairness, anti-denial-of-service, anti-sybil, anti-censorship, scale-out transaction processing throughput and sped-up payment conﬁrmation time.
+We present LotMint, a permissionless blockchain, with a purposely low
+set bar for Proof-of-Work (PoW) difficulty. Our objective is for
+personal computers, cloud virtual machines or containers, even mobile
+devices, and hopefully future IoT devices, to become the main, widely
+distributed, collectively much securer, fairer, more reliable and
+economically sustainable mining workforce for blockchains. An
+immediate question arises: how to prevent the permissionless network
+from being flooded of block dissemination traffic by a massive number
+of profit enthusiastic miners? We propose a novel notion of 
+  Decentralized Clock/Time (DC/DT) as global and logical clock/time
+which can be agreed upon as a consensus. Our construction of DC/DT
+practically uses distributed private clocks of the participation
+nodes. With DC/DT, a node upon creating or hearing a block can know
+how luckily short or unluckily long time for the block to have been
+mined and/or traveled through the network. They can ``time throttle''
+a potentially large number of unluckily mined/travelled blocks. The
+luckier blocks passing through the time throttle are treated as
+time-tie forks with a volume being ``throttle diameter'' adjustably
+controlled not to congest the network. With the number of time-tie
+forks being manageable, it is then easy to break-tie elect a winner,
+or even to orderly queue a plural number of winners for a
+``multi-core'' utilization of resource. We provide succinct and
+evident analyses of necessary properties for the LotMint blockchain
+including: decentralization, energy saving, safety, liveness,
+robustness, fairness, anti-denial-of-service, anti-sybil,
+anti-censorship, scaled-up transaction processing throughput and
+sped-up payment confirmation time.
 
 ## The LotMint Blockchain
 
 The LotMint blockchain has made a number of changes to ByzCoin. Below we describe the LotMint blockchain with changes from ByzCoin being explained, and important security properties analyzed in enumeration.
 
 1. The ﬁrst and the most important change is on the block mining mechanism. In LotMint, block mining shall use the decentralized clock enabled time throttle mechanism that we have described in Section 4. Each new epoch begins with a mining competition where the reference block RB that the miners follow is the latest won time block TB. The deﬁnition of TB shall be described in Item 9 of our enumeration description. A mining success output, which we shall follow ByzCoin’s (and Bitcoin-NG’s) naming of their “KeyBlocks”, to name it a “KeyBlock Transaction”, and denote it by KB TX. Notice that treating PoW mining blocks as transactions to disseminate in the network is novel in BFT+blockchain technologies. Thanks to our DT time-throttle control, the number of KB TXs in dissemination can be well controlled not to congest the network.
+
+
+![LotMint Figure 1](https://lotmint.io/wp-content/uploads/2020/06/figure1.png)
+
 
 ![LotMint Figure 2](https://lotmint.io/wp-content/uploads/2020/06/figure2.png)
 
