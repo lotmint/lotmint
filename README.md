@@ -42,9 +42,18 @@ The LotMint blockchain has made a number of changes to ByzCoin. Below we describ
 ![LotMint Figure 1](https://lotmint.io/wp-content/uploads/2020/06/figure1.png)
 
 
-![LotMint Figure 2](https://lotmint.io/wp-content/uploads/2020/06/figure2.png)
+![LotMint Figure 2](https://lotmint.io/wp-content/uploads/2020/06/epoch.png)
 
-2. After elapsing of ∆ interval of time (see Section 3.4 for the meaning of ∆) from the earliest written self-claimed broadcast time in one of the competing KB TXs, the network shall become with absence of KB TX. The current BFT leader shall propose a ByzCoin CoSi tree to try to have all competing KB TXs to be BFT quorum approved to enter the blockchain. Upon reaching the BFT quorum consensus, the root of this CoSi tree becomes the new reference block RB for to be referenced by a new round of mining competition.
+2. After elapsing of Φ + ∆ interval of time (see
+    Section 3.4 for the meaning of Φ and ∆) from the
+    GT written in the current reference block $\mathtt{RB}$, the
+    network shall become in the absence of $\mathtt{KB\_TX}$. The
+    current BFT leader shall propose a new ByzCoin CoSi tree to try to
+    have all competing $\mathtt{KB\_TX}$s to be BFT quorum approved to
+    enter the blockchain. Upon reaching the BFT quorum consensus, the
+    root of this new CoSi tree becomes the new reference block
+    $\mathtt{RB}$ for to be referenced by a new round of mining
+    competition.
 
 3. If the current BFT leader is detected to be censoring some transactions, including some KB TXs, the BFT leader is said to have made a “censorship-error” omission. Upon detecting a censorship-error omission, other BFT trustees shall follow the current CoSi tree to have the censorship omitted TXs and/or KB TXs to be BFT quorum approved to enter the blockchain. This “censorship-error” correction is shown by the “A SubLeader Led Authority” sub-CoSi-tree in Figure 2. A punitive de-incentive scheme shall apply to the BFT leader who is BFT quorum agreed to have factually made a censorship-error by the very existence of a sub-CoSi-tree. In case of a number of trustees competing in censorship error correction, the deterministic de-forking method of ByzCoin (Figure 5 of [15]) can break forks.
 
@@ -52,7 +61,21 @@ The LotMint blockchain has made a number of changes to ByzCoin. Below we describ
 
 5. The diameter of the time throttle, i.e., Φ deﬁned in Section 3.4, may be in consensus algorithm adjusted in real time. If the number of time-tie KB TXs forks is too small/big, then the consensus algorithm can adjust to enlarge/shrink the diameter Φ. Also, an epoch shall complete upon reaching a pre-determined desirable and suﬃcient number of time-tie KB TXs forks.
 
-6. Time-tie KB TXs are BFT approved by a quorum of trustees in the BFT consortium. In Section 2, we have intuitively attributed a BFT approval of KB TX to it being “lucky”. It is now clear that such a KB TX is lucky in terms of having large deviations, not only having passed through the time throttle, but also having found lucky routes to the quorum of trustees. We further believe that, with the large deviation theory, the size of a “lucky quorum” can also be a consensus algorithm adjustable variable, not necessary to be some 2/3 fractions of the consortium size as in the case of pBFT. We believe that a simple majority can be a reasonable setting to achieve a quorum.
+6. Time-tie $\mathtt{KB\_TX}$s are BFT approved by a quorum of
+    trustees in the BFT consortium. In Section 2, we
+    have intuitively attributed a BFT approval of $\mathtt{KB\_TX}$ to
+    being ``lucky''. In Section 3.4, we further made the meaning
+    of a lucky block specific in that it is both computation- and
+    communication-lucky. It is now clear that a lucky block is
+    possible because the random time variable of block arrival times 
+    have large deviations. Our blockchain protocol choose to utilize
+    these lucky events as a feature rather than to avoid them as
+    problems. We further believe that, with our deliberately vague
+    treatment on what to be BFT consensus agreed upon, the size of a
+    ``lucky-quorum'' can also be a consensus algorithm adjustable
+    variable, not necessary to be somewhat 2/3 fractions of the
+    consortium size as in the case of pBFT. We believe that a simple
+    majority can be a reasonable setting to achieve a quorum.
 
 7. In ByzCoin, KeyBlock mining is in a separate chain, which, because a KeyBlock contains no transactions, seemingly to us is not very clear why other not-won miners shall have an eagerness to propagate a winner’s KeyBlock. To increase the blockchain liveness as Bitcoin made a seminal contribution to BFT protocols, we shall use an incentivization rewarding scheme, e.g., that of Bitcoin-NG [17], to divide mining incentive of the current epoch to reward the next epoch mining winner(s). The incentive reward should also include the coin-base minted coins in those not-won KB TXs to encourage miners to eagerly propagate these blocks. This is very important not only for the blockchain’s transaction quality of service viewed by the users, but also for liveness of the blockchain, as in the case of Bitcoin.
 
