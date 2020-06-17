@@ -1,0 +1,5 @@
+# A Novel Notion of Lucky BFT
+
+With our novel notion of "Consensus on Luck", computation-lucky (\Phi lucky) and communication-lucky (\Delta lucky) KB_TXs are time-ties, and hence "total order sequence" of these messages (in the thought of BFT authors) no longer makes sense. The BFT leader's role is merely for liveness such that it is checked to keep the protocol going alive by signing microblocks in \Phi + \Delta DT gaps. Other witnesses simply fork the leader microblock with their views. Miners also fork the leader microblock. Summary: in Layer 1 of the LotMint blockchain, there will be no time "total order sequence" of KB_TXs.  Consensus on Luck is our firm belief on a novel BFT quorum consensus.
+
+With Lotmint being a digital chain, multi-core champion form on Layer 1 BFT consortium, and multi-core i-th winner (i > 1) form the i-th application layer ...
