@@ -25,7 +25,7 @@ import (
 
 	// _ "github.com/dedis/cothority_template/byzcoin"
 
-	// "go.dedis.ch/cothority/v3"
+	_ "lotmint/service"
 	"go.dedis.ch/cothority/v3"
 	status "go.dedis.ch/cothority/v3/status/service"
 	"go.dedis.ch/kyber/v3/util/encoding"

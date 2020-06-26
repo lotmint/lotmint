@@ -1,5 +1,13 @@
-package main
+package lotmint
 
+/*
+This holds the messages used to communicate with the service over the network.
+*/
+
+import (
+    "go.dedis.ch/onet/v3"
+    "go.dedis.ch/onet/v3/network"
+)
 
 // Register all messages so the network knows how to handle them.
 func init() {
@@ -22,7 +30,7 @@ type Clock struct {
 // ClockReply returns the time spent for the protocol-run.
 type ClockReply struct {
     Time float64
-    Childrent int
+    Children int
 }
 
 // Count will return how many times the protocol has been run.

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"sync"
 
+	"lotmint"
+	"lotmint/protocol"
 	"go.dedis.ch/onet/v3"
 	"go.dedis.ch/onet/v3/log"
 	"go.dedis.ch/onet/v3/network"
@@ -16,7 +18,7 @@ var serviceID onet.ServiceID
 
 func init() {
     var err error
-    serviceID, err = onet.RegisterNewService(Name, newService)
+    serviceID, err = onet.RegisterNewService(lotmint.ServiceName, newService)
     log.ErrFatal(err)
     network.RegisterMessage(&storage{})
 }
@@ -38,35 +40,35 @@ type storage struct {
 }
 
 // Clock starts a protocol and returns the run-time.
-func (s *Service) Clock(req *Clock) (*ClockReply, error) {
+func (s *Service) Clock(req *lotmint.Clock) (*lotmint.ClockReply, error) {
     s.storage.Lock()
-    s.storage.Cont++
+    s.storage.Count++
     s.storage.Unlock()
     s.save()
     tree := req.Roster.GenerateNaryTreeWithRoot(2, s.ServerIdentity())
-    if tree = nil {
+    if tree == nil {
         return nil, errors.New("couldn't create tree")
     }
+    log.Lvl3("Root children len:", len(tree.Root.Children))
     pi, err := s.CreateProtocol(protocol.Name, tree)
     if err != nil {
         return nil, err
     }
-    start := time..Now()
+    start := time.Now()
     pi.Start()
-    resp := &ClockReply {
-        Children: <-pi.(*protocol.LotmintProtocol).ChildCount,
+    resp := &lotmint.ClockReply {
+        Children: <-pi.(*protocol.LotMintProtocol).ChildCount,
     }
     resp.Time = time.Now().Sub(start).Seconds()
     return resp, nil
 }
 
 // Count returns the number of instantiations of the protocol.
-func (s *Service) Count(req *Count) (*CountReply, error) {
+func (s *Service) Count(req *lotmint.Count) (*lotmint.CountReply, error) {
     s.storage.Lock()
     defer s.storage.Unlock()
-    return &CountReply{Count: s.storage.Count}, nil
+    return &lotmint.CountReply{Count: s.storage.Count}, nil
 }
-
 
 // NewProtocol is called on all nodes of a Tree (except the root, since it is
 // the one starting the protocol) so it's the Service that will be called to
@@ -94,7 +96,7 @@ func (s *Service) save() {
 // if it finds a valid config-file.
 func (s *Service) tryLoad() error {
     s.storage = &storage{}
-    msg, err : s.Load(storageID)
+    msg, err := s.Load(storageID)
     if err != nil {
         return err
     }
