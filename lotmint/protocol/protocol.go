@@ -48,6 +48,7 @@ func (p *LotMintProtocol) Start() error {
     return p.SendTo(p.TreeNode(), &Announce{"cothority rulez!"})
 }
 
+// Router
 // Dispatch implements the main logic of the protocol. The function is only
 // called once. The protocol is considered finished when Dispatch returns and
 // Done is called.

@@ -3,17 +3,26 @@ package main
 import (
     "errors"
     "os"
+    "path"
 
     lotmint "lotmint"
 
     "go.dedis.ch/onet/v3/app"
+    "go.dedis.ch/onet/v3/cfgpath"
     "go.dedis.ch/onet/v3/log"
+    "golang.org/x/xerrors"
     "gopkg.in/urfave/cli.v1"
+)
+
+const (
+	// DefaultName is the name of the binary we produce and is used to create a directory
+	// folder with this name
+	DefaultName = "lotmint"
 )
 
 func main() {
     cliApp := cli.NewApp()
-    cliApp.Name = "LotMint"
+    cliApp.Name = "app"
     cliApp.Usage = "Used for building other apps."
     cliApp.Version = "0.1"
     groupsDef := "the group-definition-file"
@@ -33,11 +42,17 @@ func main() {
 	    Action:	cmdCounter,
 	},
     }
+    cliApp.Commands = append(cliApp.Commands, cmds...)
     cliApp.Flags = []cli.Flag{
         cli.IntFlag{
             Name: "debug, d",
 	    Value: 0,
 	    Usage: "debug-level: 1 for terse, 5 for maximal,",
+	},
+	cli.StringFlag{
+            Name: "config, c",
+            Value: path.Join(cfgpath.GetConfigPath(DefaultName), app.DefaultGroupFile),
+            Usage: "Configuration file of the server",
 	},
     }
     cliApp.Before = func(c *cli.Context) error {
@@ -45,6 +60,96 @@ func main() {
 	return nil
     }
     log.ErrFatal(cliApp.Run(os.Args))
+}
+
+// Use readGroup instead later.
+func parseConfig(c *cli.Context) *app.Group {
+    config := c.GlobalString("config")
+    if _, err := os.Stat(config); os.IsNotExist(err) {
+        log.Fatalf("[-] Configuration file does not exist. %s", config)
+    }
+    f, err := os.Open(config)
+    log.ErrFatal(err, "Couldn't open group definition file")
+    group, err := app.ReadGroupDescToml(f)
+    log.ErrFatal(err, "Error while reading group definition file", err)
+    if len(group.Roster.List) == 0 {
+        log.ErrFatalf(err, "Empty entity or invalid group definition in: %s", config)
+    }
+    return group
+}
+// Add new peer node to peer storage
+func addPeer(c *cli.Context) error {
+    if c.NArg() < 1 {
+	    return xerrors.New("please give the following arguments: " +
+	        "host[:port] [host[:port]]...")
+    }
+    var peers []string
+    for i := 0; i < c.NArg(); i++ {
+        // TODO: Verify peer node format
+        peers = append(peers, c.Args().Get(i))
+    }
+    log.Info("Add peers: ", peers)
+    group := parseConfig(c)
+    client := lotmint.NewClient()
+    resp, err := client.Peer(group.Roster, lotmint.Peer{
+            Command: "add",
+	    PeerNodes: peers,
+    })
+    if err != nil {
+	    return errors.New("Error: " + err.Error())
+    }
+    log.Info("Finished to add peers", resp.List)
+    return nil
+}
+
+// Delete new peer node from peer storage
+func delPeer(c *cli.Context) error {
+    if c.NArg() < 1 {
+	    return xerrors.New("please give the following arguments: " +
+	        "host[:port] [host[:port]]...")
+    }
+    var peers []string
+    for i := 0; i < c.NArg(); i++ {
+        // TODO: Verify peer node format
+        peers = append(peers, c.Args().Get(i))
+    }
+    log.Info("Remove peers: ", peers)
+    group := parseConfig(c)
+    client := lotmint.NewClient()
+    resp, err := client.Peer(group.Roster, lotmint.Peer{
+            Command: "del",
+	    PeerNodes: peers,
+    })
+    if err != nil {
+	    return errors.New("Error: " + err.Error())
+    }
+    log.Info("Finished to remove peers", resp.List)
+    return nil
+}
+
+// Show peer status
+func showPeer(c *cli.Context) error {
+    var peers []string
+    for i := 0; i < c.NArg(); i++ {
+        // TODO: Verify peer node format
+        peers = append(peers, c.Args().Get(i))
+    }
+    if len(peers) > 0 {
+        log.Info("Show peers: ", peers)
+    } else {
+        log.Info("Show all peers")
+    }
+    group := parseConfig(c)
+    client := lotmint.NewClient()
+    resp, err := client.Peer(group.Roster, lotmint.Peer{
+            Command: "show",
+	    PeerNodes: peers,
+    })
+    if err != nil {
+	    return errors.New("Error: " + err.Error())
+    }
+    log.Info("Peers Status\n", resp.List)
+    return nil
 }
 
 // Returns the time needed to contact all nodes.

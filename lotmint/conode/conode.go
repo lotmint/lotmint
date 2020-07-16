@@ -21,6 +21,7 @@ import (
 	"os"
 	"path"
 	"reflect"
+	"strings"
 	"time"
 
 	// _ "github.com/dedis/cothority_template/byzcoin"
@@ -92,6 +93,13 @@ func main() {
 			Name:   "server",
 			Usage:  "Start lotmint server",
 			Action: runServer,
+			Flags: []cli.Flag{
+				cli.StringFlag{
+					Name:  "peers, p",
+					Usage: "LotMint connected with peers",
+				},
+
+			},
 		},
 		{
 			Name:      "check",
@@ -150,12 +158,27 @@ func main() {
 var raiseFdLimit func()
 
 func runServer(ctx *cli.Context) error {
+	peers := strings.Split(ctx.String("peers"), ",")
+	if len(peers) == 0 {
+	    // TODO: Add some hard-code peers
+            log.Fatal("[-] Peers must not be empty.")
+	}
+	// service.peers = peers
 	// first check the options
 	config := ctx.GlobalString("config")
 	if raiseFdLimit != nil {
-		raiseFdLimit()
+            raiseFdLimit()
 	}
-	app.RunServer(config)
+	// app.RunServer(config)
+	if _, err := os.Stat(config); os.IsNotExist(err) {
+            log.Fatal("[-] Configuration file does not exist. %s", config)
+	}
+	// Let's read the config
+	_, server, err := app.ParseCothority(config)
+	if err != nil {
+	    log.Fatal("Couldn't parse config:", err)
+	}
+	server.Start()
 	return nil
 }
 

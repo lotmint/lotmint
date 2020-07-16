@@ -54,3 +54,15 @@ func (c *Client) Count(si *network.ServerIdentity) (int, error) {
     }
     return reply.Count, nil
 }
+
+// Peer will operation the communication with nodes
+func (c *Client) Peer(r *onet.Roster, p Peer) (*PeerReply, error) {
+    dst := r.RandomServerIdentity()
+    log.Lvl4("Sending message to", dst)
+    reply := &PeerReply{}
+    err := c.SendProtobuf(dst, p, reply)
+    if err != nil {
+        return nil, err
+    }
+    return reply, nil
+}

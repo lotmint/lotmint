@@ -1,9 +1,11 @@
+/* Websocket */
 package service
 
 import (
 	"time"
 
 	"errors"
+	// "fmt"
 	"sync"
 
 	"lotmint"
@@ -11,9 +13,11 @@ import (
 	"go.dedis.ch/onet/v3"
 	"go.dedis.ch/onet/v3/log"
 	"go.dedis.ch/onet/v3/network"
+        "golang.org/x/xerrors"
 )
 
 var serviceID onet.ServiceID
+var peers []string
 
 
 func init() {
@@ -29,6 +33,8 @@ type Service struct {
     *onet.ServiceProcessor
 
     storage *storage
+
+    peerStorage *peerStorage
 }
 
 var storageID = []byte("main")
@@ -37,6 +43,15 @@ var storageID = []byte("main")
 type storage struct {
     Count int
     sync.Mutex
+}
+
+// Storage peer node
+type peerStorage struct {
+    sync.Mutex
+    // Use map structure for peerNodes to quickly find duplicates
+    peerNodeMap map[string]*network.ServerIdentity
+    addPeerChan chan []string
+    delPeerChan chan []string
 }
 
 // Clock starts a protocol and returns the run-time.
@@ -68,6 +83,46 @@ func (s *Service) Count(req *lotmint.Count) (*lotmint.CountReply, error) {
     s.storage.Lock()
     defer s.storage.Unlock()
     return &lotmint.CountReply{Count: s.storage.Count}, nil
+}
+
+// Peer Operation
+func (s *Service) Peer(req *lotmint.Peer) (*lotmint.PeerReply, error) {
+    s.peerStorage.Lock()
+    defer s.peerStorage.Unlock()
+    var peers []string
+    var resp = &lotmint.PeerReply{}
+    switch req.Command {
+    case "add":
+	for _, peerNode := range req.PeerNodes{
+	    if _, ok := s.peerStorage.peerNodeMap[peerNode]; !ok {
+                peers = append(peers, peerNode)
+	    }
+	}
+	if len(peers) > 0 {
+            s.peerStorage.addPeerChan <- peers
+        }
+    case "del":
+	for _, peerNode := range req.PeerNodes{
+	    if _, ok := s.peerStorage.peerNodeMap[peerNode]; ok {
+                peers = append(peers, peerNode)
+	    }
+	}
+	if len(peers) > 0 {
+            s.peerStorage.delPeerChan <- peers
+        }
+    case "show":
+	if len(req.PeerNodes) > 0 {
+	    peers = req.PeerNodes
+	} else {
+	    for key, _ := range s.peerStorage.peerNodeMap {
+                peers = append(peers, key)
+            }
+	}
+    default:
+        return nil, xerrors.New("Command not supported")
+    }
+    resp.List =  peers
+    return resp, nil
 }
 
 // NewProtocol is called on all nodes of a Tree (except the root, since it is
@@ -111,19 +166,50 @@ func (s *Service) tryLoad() error {
     return nil
 }
 
+func (s *Service) AddPeerServerIdentity(peers []string) {
+    s.peerStorage.Lock()
+    defer s.peerStorage.Unlock()
+}
+
+func (s *Service) RemovePeerServerIdentity(peers []string) {
+    s.peerStorage.Lock()
+    defer s.peerStorage.Unlock()
+
+}
+
+func (s *Service) loop() {
+    for {
+        select {
+	case peers := <-s.peerStorage.addPeerChan:
+		go s.AddPeerServerIdentity(peers)
+        case peers := <-s.peerStorage.delPeerChan:
+		go s.RemovePeerServerIdentity(peers)
+	}
+    }
+}
+
 // newService receives the context that holds information about the node it's
 // running on. Saving and loading can be done using the context. The data will
 // be stored in memory for tests and simulations, and on disk for real deployments.
 func newService(c *onet.Context) (onet.Service, error) {
     s := &Service{
         ServiceProcessor: onet.NewServiceProcessor(c),
+	peerStorage: &peerStorage{
+	    peerNodeMap: make(map[string]*network.ServerIdentity),
+	    addPeerChan: make(chan []string),
+	    delPeerChan: make(chan []string),
+	},
     }
     if err := s.RegisterHandlers(s.Clock, s.Count); err != nil {
-        return nil, errors.New("Couldn't register messages")
+        return nil, errors.New("Couldn't register handlers")
+    }
+    if err := s.RegisterHandlers(s.Peer); err != nil {
+        return nil, errors.New("Couldn't register handlers")
     }
     if err := s.tryLoad(); err != nil {
         log.Error(err)
 	return nil, err
     }
+    go s.loop()
     return s, nil
 }

@@ -15,6 +15,7 @@ func init() {
         Count{}, CountReply{},
         Clock{}, ClockReply{},
     )
+    network.RegisterMessages(Peer{}, PeerReply{})
 }
 
 const (
@@ -40,4 +41,15 @@ type Count struct {
 // CountReply returns the number of protocol-runs
 type CountReply struct {
     Count int
+}
+
+// Peer Operation
+type Peer struct {
+    Command string
+    PeerNodes []string
+}
+
+// PeerReply returns the operation status
+type PeerReply struct {
+    List []string
 }
