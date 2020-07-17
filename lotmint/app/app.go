@@ -2,6 +2,7 @@ package main
 
 import (
     "errors"
+    "net/url"
     "os"
     "path"
 
@@ -10,6 +11,9 @@ import (
     "go.dedis.ch/onet/v3/app"
     "go.dedis.ch/onet/v3/cfgpath"
     "go.dedis.ch/onet/v3/log"
+    "go.dedis.ch/onet/v3/network"
+    "go.dedis.ch/kyber/v3/suites"
+    "go.dedis.ch/kyber/v3/util/encoding"
     "golang.org/x/xerrors"
     "gopkg.in/urfave/cli.v1"
 )
@@ -77,21 +81,50 @@ func parseConfig(c *cli.Context) *app.Group {
     }
     return group
 }
+
+// Convert url string info peer struct
+func convertPeerURL(peerURL string) (*network.ServerIdentity, error) {
+    parse, err := url.Parse(peerURL)
+    if err != nil {
+        return nil, xerrors.Errorf("url parse error: %v", err)
+    }
+    suite, err := suites.Find("Ed25519")
+    if err != nil {
+        return nil, xerrors.Errorf("kyber suite: %v", err)
+    }
+    point, err := encoding.StringHexToPoint(suite, parse.User.Username())
+    if err != nil {
+	return nil, xerrors.Errorf("parsing public key: %v", err)
+    }
+    var connType network.ConnType
+    switch parse.Scheme {
+    case "tcp":
+	connType = network.PlainTCP
+    default:
+        connType = network.TLS
+    }
+    si := network.NewServerIdentity(point, network.NewAddress(connType, parse.Host))
+    return si, nil
+}
+
 // Add new peer node to peer storage
 func addPeer(c *cli.Context) error {
     if c.NArg() < 1 {
 	    return xerrors.New("please give the following arguments: " +
 	        "host[:port] [host[:port]]...")
     }
-    var peers []string
+    var peers []*network.ServerIdentity
     for i := 0; i < c.NArg(); i++ {
-        // TODO: Verify peer node format
-        peers = append(peers, c.Args().Get(i))
+	peerURL := c.Args().Get(i)
+	si, err := convertPeerURL(peerURL)
+	if err == nil {
+            peers = append(peers, si)
+        }
     }
-    log.Info("Add peers: ", peers)
+    log.Info("Add peers:", peers)
     group := parseConfig(c)
     client := lotmint.NewClient()
-    resp, err := client.Peer(group.Roster, lotmint.Peer{
+    resp, err := client.Peer(group.Roster, &lotmint.Peer{
             Command: "add",
 	    PeerNodes: peers,
     })
@@ -108,15 +141,18 @@ func delPeer(c *cli.Context) error {
 	    return xerrors.New("please give the following arguments: " +
 	        "host[:port] [host[:port]]...")
     }
-    var peers []string
+    var peers []*network.ServerIdentity
     for i := 0; i < c.NArg(); i++ {
-        // TODO: Verify peer node format
-        peers = append(peers, c.Args().Get(i))
+	peerURL := c.Args().Get(i)
+	si, err := convertPeerURL(peerURL)
+	if err == nil {
+            peers = append(peers, si)
+        }
     }
     log.Info("Remove peers: ", peers)
     group := parseConfig(c)
     client := lotmint.NewClient()
-    resp, err := client.Peer(group.Roster, lotmint.Peer{
+    resp, err := client.Peer(group.Roster, &lotmint.Peer{
             Command: "del",
 	    PeerNodes: peers,
     })
@@ -129,10 +165,13 @@ func delPeer(c *cli.Context) error {
 
 // Show peer status
 func showPeer(c *cli.Context) error {
-    var peers []string
+    var peers []*network.ServerIdentity
     for i := 0; i < c.NArg(); i++ {
-        // TODO: Verify peer node format
-        peers = append(peers, c.Args().Get(i))
+	peerURL := c.Args().Get(i)
+	si, err := convertPeerURL(peerURL)
+	if err == nil {
+            peers = append(peers, si)
+        }
     }
     if len(peers) > 0 {
         log.Info("Show peers: ", peers)
@@ -141,7 +180,7 @@ func showPeer(c *cli.Context) error {
     }
     group := parseConfig(c)
     client := lotmint.NewClient()
-    resp, err := client.Peer(group.Roster, lotmint.Peer{
+    resp, err := client.Peer(group.Roster, &lotmint.Peer{
             Command: "show",
 	    PeerNodes: peers,
     })

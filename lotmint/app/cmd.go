@@ -11,8 +11,11 @@ var cmds = cli.Commands{
             Name:	"peer",
 	    Usage:	"Provides cli interface for peers.",
 	    Aliases:	[]string{"p"},
+	    ArgsUsage: "<transaction name> [<arg>...]",
 	    Description: fmt.Sprint(`
     app peer add HOST:PORT ...
+    app peer del HOST:PORT ...
+    app peer show
 	    `),
 	    Subcommands: cli.Commands{
                 {

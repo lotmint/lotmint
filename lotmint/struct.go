@@ -46,10 +46,10 @@ type CountReply struct {
 // Peer Operation
 type Peer struct {
     Command string
-    PeerNodes []string
+    PeerNodes []*network.ServerIdentity
 }
 
 // PeerReply returns the operation status
 type PeerReply struct {
-    List []string
+    List []*network.ServerIdentity
 }

@@ -19,12 +19,14 @@ import (
 var serviceID onet.ServiceID
 var peers []string
 
+var serviceMessageId network.MessageTypeID
 
 func init() {
     var err error
     serviceID, err = onet.RegisterNewService(lotmint.ServiceName, newService)
     log.ErrFatal(err)
     network.RegisterMessage(&storage{})
+    serviceMessageId = network.RegisterMessage(&ServiceMessage{})
 }
 
 type Service struct {
@@ -39,6 +41,8 @@ type Service struct {
 
 var storageID = []byte("main")
 
+var peerStorageID = []byte("peers")
+
 // storage is used to save our data.
 type storage struct {
     Count int
@@ -50,8 +54,6 @@ type peerStorage struct {
     sync.Mutex
     // Use map structure for peerNodes to quickly find duplicates
     peerNodeMap map[string]*network.ServerIdentity
-    addPeerChan chan []string
-    delPeerChan chan []string
 }
 
 // Clock starts a protocol and returns the run-time.
@@ -89,33 +91,34 @@ func (s *Service) Count(req *lotmint.Count) (*lotmint.CountReply, error) {
 func (s *Service) Peer(req *lotmint.Peer) (*lotmint.PeerReply, error) {
     s.peerStorage.Lock()
     defer s.peerStorage.Unlock()
-    var peers []string
+    var peers []*network.ServerIdentity
     var resp = &lotmint.PeerReply{}
+    log.Lvl3("Peer command:", req.Command)
     switch req.Command {
     case "add":
 	for _, peerNode := range req.PeerNodes{
-	    if _, ok := s.peerStorage.peerNodeMap[peerNode]; !ok {
+	    if _, ok := s.peerStorage.peerNodeMap[peerNode.Public.String()]; !ok {
                 peers = append(peers, peerNode)
 	    }
 	}
 	if len(peers) > 0 {
-            s.peerStorage.addPeerChan <- peers
+	    go s.AddPeerServerIdentity(peers, true)
         }
     case "del":
 	for _, peerNode := range req.PeerNodes{
-	    if _, ok := s.peerStorage.peerNodeMap[peerNode]; ok {
+	    if _, ok := s.peerStorage.peerNodeMap[peerNode.Public.String()]; ok {
                 peers = append(peers, peerNode)
 	    }
 	}
 	if len(peers) > 0 {
-            s.peerStorage.delPeerChan <- peers
+	    go s.RemovePeerServerIdentity(peers)
         }
     case "show":
 	if len(req.PeerNodes) > 0 {
 	    peers = req.PeerNodes
 	} else {
-	    for key, _ := range s.peerStorage.peerNodeMap {
-                peers = append(peers, key)
+	    for _, val := range s.peerStorage.peerNodeMap {
+                peers = append(peers, val)
             }
 	}
     default:
@@ -145,6 +148,13 @@ func (s *Service) save() {
     if err != nil {
         log.Error("Couldn't save data:", err)
     }
+    // Save peers data
+    s.peerStorage.Lock()
+    defer s.peerStorage.Unlock()
+    err = s.Save(peerStorageID, s.peerStorage)
+    if err != nil {
+        log.Error("Couldn't save peer data:", err)
+    }
 }
 
 // Tries to load the configuration and updates the data in the service
@@ -163,29 +173,69 @@ func (s *Service) tryLoad() error {
     if !ok {
        return errors.New("Data of wrong type")
     }
+
+    // Load peers data
+    s.peerStorage = &peerStorage{}
+    msg, err = s.Load(peerStorageID)
+    if err != nil {
+        return err
+    }
+    if msg == nil {
+        return nil
+    }
+    s.peerStorage, ok = msg.(*peerStorage)
+    if !ok {
+       return errors.New("Peer data of wrong type")
+    }
+
     return nil
 }
 
-func (s *Service) AddPeerServerIdentity(peers []string) {
+func (s *Service) AddPeerServerIdentity(peers []*network.ServerIdentity, needConn bool) {
     s.peerStorage.Lock()
     defer s.peerStorage.Unlock()
+    for _, peer := range peers {
+	// Self Serveridentity
+        // s.ServerIdentity()
+	if needConn {
+	    err := s.SendRaw(peer, &ServiceMessage{"Test Service Message"})
+	    if err != nil {
+                log.Error(err)
+                continue
+	    }
+        }
+	s.peerStorage.peerNodeMap[peer.Public.String()] = peer
+    }
 }
 
-func (s *Service) RemovePeerServerIdentity(peers []string) {
+func (s *Service) RemovePeerServerIdentity(peers []*network.ServerIdentity) {
     s.peerStorage.Lock()
     defer s.peerStorage.Unlock()
-
+    for _, peer := range peers {
+        if _, ok := s.peerStorage.peerNodeMap[peer.Public.String()]; ok {
+	    delete(s.peerStorage.peerNodeMap, peer.Public.String())
+        }
+    }
 }
 
 func (s *Service) loop() {
     for {
         select {
-	case peers := <-s.peerStorage.addPeerChan:
-		go s.AddPeerServerIdentity(peers)
-        case peers := <-s.peerStorage.delPeerChan:
-		go s.RemovePeerServerIdentity(peers)
 	}
     }
+}
+
+// handleMessageReq messages.
+func (s *Service) handleMessageReq(env *network.Envelope) error {
+    // Parse message.
+    req, ok := env.Msg.(*ServiceMessage)
+    if !ok {
+        return xerrors.Errorf("%v failed to cast to MessageReq", s.ServerIdentity())
+    }
+    log.Lvl3("req:", req)
+    log.Lvl3("env:", env)
+    s.AddPeerServerIdentity([]*network.ServerIdentity{env.ServerIdentity}, false)
+    return nil
 }
 
 // newService receives the context that holds information about the node it's
@@ -196,8 +246,6 @@ func newService(c *onet.Context) (onet.Service, error) {
         ServiceProcessor: onet.NewServiceProcessor(c),
 	peerStorage: &peerStorage{
 	    peerNodeMap: make(map[string]*network.ServerIdentity),
-	    addPeerChan: make(chan []string),
-	    delPeerChan: make(chan []string),
 	},
     }
     if err := s.RegisterHandlers(s.Clock, s.Count); err != nil {
@@ -206,6 +254,7 @@ func newService(c *onet.Context) (onet.Service, error) {
     if err := s.RegisterHandlers(s.Peer); err != nil {
         return nil, errors.New("Couldn't register handlers")
     }
+    s.RegisterProcessorFunc(serviceMessageId, s.handleMessageReq)
     if err := s.tryLoad(); err != nil {
         log.Error(err)
 	return nil, err
