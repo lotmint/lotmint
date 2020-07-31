@@ -93,13 +93,6 @@ func main() {
 			Name:   "server",
 			Usage:  "Start lotmint server",
 			Action: runServer,
-			Flags: []cli.Flag{
-				cli.StringFlag{
-					Name:  "peers, p",
-					Usage: "LotMint connected with peers",
-				},
-
-			},
 		},
 		{
 			Name:      "check",
@@ -158,12 +151,6 @@ func main() {
 var raiseFdLimit func()
 
 func runServer(ctx *cli.Context) error {
-	peers := strings.Split(ctx.String("peers"), ",")
-	if len(peers) == 0 {
-	    // TODO: Add some hard-code peers
-            log.Fatal("[-] Peers must not be empty.")
-	}
-	// service.peers = peers
 	// first check the options
 	config := ctx.GlobalString("config")
 	if raiseFdLimit != nil {

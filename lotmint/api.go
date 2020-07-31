@@ -9,6 +9,8 @@ This part of the service runs on the client or the app.
 */
 
 import (
+    "lotmint/service"
+
     "go.dedis.ch/cothority/v3"
     "go.dedis.ch/onet/v3"
     "go.dedis.ch/onet/v3/log"
@@ -61,6 +63,17 @@ func (c *Client) Peer(r *onet.Roster, p *Peer) (*PeerReply, error) {
     log.Lvl4("Sending message to", dst)
     reply := &PeerReply{}
     err := c.SendProtobuf(dst, p, reply)
+    if err != nil {
+        return nil, err
+    }
+    return reply, nil
+}
+
+func (c *Client) CreateGenesisBlock(r *onet.Roster) (*service.GenesisBlockReply, error) {
+    dst := r.RandomServerIdentity()
+    log.Lvl4("Sending message to", dst)
+    reply := &service.GenesisBlockReply{}
+    err := c.SendProtobuf(dst, &service.GenesisBlockRequest{}, reply)
     if err != nil {
         return nil, err
     }

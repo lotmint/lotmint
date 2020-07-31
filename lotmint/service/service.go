@@ -29,10 +29,25 @@ func init() {
     serviceMessageId = network.RegisterMessage(&ServiceMessage{})
 }
 
+// Nonce is used to prevent replay attacks in instructions.
+type Nonce [32]byte
+
+// GenNonce returns a random nonce.
+func GenNonce() (n Nonce) {
+	random.Bytes(n[:], random.New())
+	return n
+}
+
 type Service struct {
     // We need to embed the ServiceProcessor, so that incoming messages
     // are correctly handled.
     *onet.ServiceProcessor
+
+    db *BlockDB
+
+    blockBuffer *blockBuffer
+
+    txPool txPool
 
     storage *storage
 
@@ -126,6 +141,20 @@ func (s *Service) Peer(req *lotmint.Peer) (*lotmint.PeerReply, error) {
     }
     resp.List =  peers
     return resp, nil
+}
+
+// New BlockChain
+func (s *Service) CreateGenesisBlock(req *GenesisBlockRequest) (*GenesisBlockReply, error) {
+    // The genesis block is a key block
+    genesisBlock := NewKeyBlock()
+    genesisBlock.Index = 0
+    genesisBlock.Nonce = GenNonce()
+    timestamp := time.Now().UnixNano()
+    genesisBlock.Timestamp = GenNonce()
+    s.db.Store(genesisBlock)
+    return &lotmint.GenesisBlockReply{
+        block: genesisBlock 
+    }, nil
 }
 
 // NewProtocol is called on all nodes of a Tree (except the root, since it is
@@ -242,8 +271,12 @@ func (s *Service) handleMessageReq(env *network.Envelope) error {
 // running on. Saving and loading can be done using the context. The data will
 // be stored in memory for tests and simulations, and on disk for real deployments.
 func newService(c *onet.Context) (onet.Service, error) {
+    db, bucket := c.GetAdditionalBucket([]byte("blockdb");
     s := &Service{
         ServiceProcessor: onet.NewServiceProcessor(c),
+	db: NewBlockDB(db, bucket),
+	blockBuffer: newBlockBuffer(),
+	txPool: newTxPool(),
 	peerStorage: &peerStorage{
 	    peerNodeMap: make(map[string]*network.ServerIdentity),
 	},
@@ -251,9 +284,10 @@ func newService(c *onet.Context) (onet.Service, error) {
     if err := s.RegisterHandlers(s.Clock, s.Count); err != nil {
         return nil, errors.New("Couldn't register handlers")
     }
-    if err := s.RegisterHandlers(s.Peer); err != nil {
+    if err := s.RegisterHandlers(s.Peer, s.CreateGenesisBlock); err != nil {
         return nil, errors.New("Couldn't register handlers")
     }
+    s.ServiceProcessor.RegisterStatusReporter("BlockDB", s.db)
     s.RegisterProcessorFunc(serviceMessageId, s.handleMessageReq)
     if err := s.tryLoad(); err != nil {
         log.Error(err)

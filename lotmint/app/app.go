@@ -191,6 +191,19 @@ func showPeer(c *cli.Context) error {
     return nil
 }
 
+// Create the genesis block to start new blockchain.
+func createGenesisBlock(c *cli.Context) error {
+    group := parseConfig(c)
+    client := lotmint.NewClient()
+    resp, err := client.CreateGenesisBlock(group.Roster)
+    if err != nil {
+	    return errors.New("Error: " + err.Error())
+    }
+    log.Info("Create new blockchain successful.\n", resp.Block)
+    return nil
+
+}
+
 // Returns the time needed to contact all nodes.
 func cmdTime(c *cli.Context) error {
     log.Info("Time command")

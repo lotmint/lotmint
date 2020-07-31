@@ -38,4 +38,11 @@ var cmds = cli.Commands{
 		},
 	    },
     },
+    {
+            Name:	"genesisblock",
+	    Usage:	"Initialize new blockchain.",
+	    Aliases:	[]string{"g"},
+	    ArgsUsage: "<transaction name> [<arg>...]",
+	    Action: createGenesisBlock,
+    }
 }
