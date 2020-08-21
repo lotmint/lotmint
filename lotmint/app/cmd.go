@@ -44,5 +44,22 @@ var cmds = cli.Commands{
 	    Aliases:	[]string{"g"},
 	    ArgsUsage: "<transaction name> [<arg>...]",
 	    Action: createGenesisBlock,
-    }
+    },
+    {
+            Name:	"block",
+	    Usage:	"Read a block given by an index or hash id",
+	    Aliases:	[]string{"b"},
+	    Action: showBlock,
+	    Flags: []cli.Flag{
+                cli.IntFlag{
+                    Name: "index",
+		    Value: -1,
+		    Usage: "give this block index",
+		},
+                cli.StringFlag{
+                    Name: "hash",
+		    Usage: "give block hash id to show",
+		},
+	    },
+    },
 }

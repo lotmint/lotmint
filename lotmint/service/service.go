@@ -2,14 +2,18 @@
 package service
 
 import (
-	"time"
-
 	"errors"
+	"math/rand"
 	// "fmt"
 	"sync"
+	"time"
 
 	"lotmint"
+        bc "lotmint/blockchain"
 	"lotmint/protocol"
+
+        "go.dedis.ch/kyber/v3/pairing"
+	"go.dedis.ch/kyber/v3/util/random"
 	"go.dedis.ch/onet/v3"
 	"go.dedis.ch/onet/v3/log"
 	"go.dedis.ch/onet/v3/network"
@@ -20,6 +24,8 @@ var serviceID onet.ServiceID
 var peers []string
 
 var serviceMessageId network.MessageTypeID
+
+var suite = pairing.NewSuiteBn256()
 
 func init() {
     var err error
@@ -38,6 +44,11 @@ func GenNonce() (n Nonce) {
 	return n
 }
 
+func GenNonce64() uint64 {
+    rand.Seed(int64(time.Now().Nanosecond()))
+    return rand.Uint64()
+}
+
 type Service struct {
     // We need to embed the ServiceProcessor, so that incoming messages
     // are correctly handled.
@@ -52,6 +63,8 @@ type Service struct {
     storage *storage
 
     peerStorage *peerStorage
+
+    createBlockChainMutex sync.Mutex
 }
 
 var storageID = []byte("main")
@@ -139,22 +152,58 @@ func (s *Service) Peer(req *lotmint.Peer) (*lotmint.PeerReply, error) {
     default:
         return nil, xerrors.New("Command not supported")
     }
-    resp.List =  peers
+    resp.List = peers
     return resp, nil
 }
 
 // New BlockChain
-func (s *Service) CreateGenesisBlock(req *GenesisBlockRequest) (*GenesisBlockReply, error) {
-    // The genesis block is a key block
-    genesisBlock := NewKeyBlock()
-    genesisBlock.Index = 0
-    genesisBlock.Nonce = GenNonce()
-    timestamp := time.Now().UnixNano()
-    genesisBlock.Timestamp = GenNonce()
+func (s *Service) CreateGenesisBlock(req *lotmint.GenesisBlockRequest) (*bc.Block, error) {
+    s.createBlockChainMutex.Lock()
+    defer s.createBlockChainMutex.Unlock()
+    // genesisBlock.Timestamp = uint64(time.Now().UnixNano())
+    genesisBlock := bc.GetGenesisBlock()
+    block := s.db.GetByID(genesisBlock.Hash)
+    if block != nil {
+        return nil, errors.New("Already joined blockchain.")
+    }
     s.db.Store(genesisBlock)
-    return &lotmint.GenesisBlockReply{
-        block: genesisBlock 
-    }, nil
+    s.db.UpdateLatest(genesisBlock.Hash)
+    return genesisBlock, nil
+}
+
+func (s *Service) GetBlockByID(req *lotmint.BlockByIDRequest) (*bc.Block, error) {
+    s.createBlockChainMutex.Lock()
+    defer s.createBlockChainMutex.Unlock()
+    block := s.db.GetByID(BlockID(req.Value))
+    if block == nil {
+        return nil, xerrors.New("No such block")
+    }
+    return block, nil
+}
+
+func (s *Service) GetBlockByIndex(req *lotmint.BlockByIndexRequest) (*bc.Block, error) {
+    s.createBlockChainMutex.Lock()
+    defer s.createBlockChainMutex.Unlock()
+
+    block := s.db.GetLatest()
+    if block == nil {
+        return nil, xerrors.New("No such block")
+    }
+    if block.Index > req.Value {
+        var err error
+        block, err = s.db.GetBlockByIndex(req.Value)
+	if err != nil {
+            block = s.db.GetLatest()
+            for block.Index >= 0 && block.Index != req.Value {
+                block = s.db.GetByID(block.Hash)
+                if block == nil {
+                    return nil, errors.New("No such block")
+                }
+            }
+	}
+    }
+    return block, nil
+
 }
 
 // NewProtocol is called on all nodes of a Tree (except the root, since it is
@@ -271,7 +320,7 @@ func (s *Service) handleMessageReq(env *network.Envelope) error {
 // running on. Saving and loading can be done using the context. The data will
 // be stored in memory for tests and simulations, and on disk for real deployments.
 func newService(c *onet.Context) (onet.Service, error) {
-    db, bucket := c.GetAdditionalBucket([]byte("blockdb");
+    db, bucket := c.GetAdditionalBucket([]byte("blockdb"))
     s := &Service{
         ServiceProcessor: onet.NewServiceProcessor(c),
 	db: NewBlockDB(db, bucket),
@@ -281,13 +330,17 @@ func newService(c *onet.Context) (onet.Service, error) {
 	    peerNodeMap: make(map[string]*network.ServerIdentity),
 	},
     }
+    if err := s.db.BuildIndex(); err != nil {
+        log.Error(err)
+	return nil, err
+    }
     if err := s.RegisterHandlers(s.Clock, s.Count); err != nil {
         return nil, errors.New("Couldn't register handlers")
     }
-    if err := s.RegisterHandlers(s.Peer, s.CreateGenesisBlock); err != nil {
+    if err := s.RegisterHandlers(s.Peer, s.CreateGenesisBlock, s.GetBlockByID, s.GetBlockByIndex); err != nil {
         return nil, errors.New("Couldn't register handlers")
     }
-    s.ServiceProcessor.RegisterStatusReporter("BlockDB", s.db)
+    // s.ServiceProcessor.RegisterStatusReporter("BlockDB", s.db)
     s.RegisterProcessorFunc(serviceMessageId, s.handleMessageReq)
     if err := s.tryLoad(); err != nil {
         log.Error(err)

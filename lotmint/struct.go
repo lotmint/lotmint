@@ -5,6 +5,8 @@ This holds the messages used to communicate with the service over the network.
 */
 
 import (
+    bc "lotmint/blockchain"
+
     "go.dedis.ch/onet/v3"
     "go.dedis.ch/onet/v3/network"
 )
@@ -16,6 +18,7 @@ func init() {
         Clock{}, ClockReply{},
     )
     network.RegisterMessages(Peer{}, PeerReply{})
+    network.RegisterMessages(GenesisBlockRequest{}, BlockByIDRequest{}, BlockByIndexRequest{})
 }
 
 const (
@@ -52,4 +55,15 @@ type Peer struct {
 // PeerReply returns the operation status
 type PeerReply struct {
     List []*network.ServerIdentity
+}
+
+type GenesisBlockRequest struct {
+}
+
+type BlockByIDRequest struct {
+    Value bc.BlockID
+}
+
+type BlockByIndexRequest struct {
+    Value int
 }

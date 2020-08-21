@@ -21,7 +21,6 @@ import (
 	"os"
 	"path"
 	"reflect"
-	"strings"
 	"time"
 
 	// _ "github.com/dedis/cothority_template/byzcoin"

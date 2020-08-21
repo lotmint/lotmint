@@ -2,11 +2,14 @@ package main
 
 import (
     "errors"
+    "encoding/hex"
     "net/url"
     "os"
     "path"
+    "strings"
 
     lotmint "lotmint"
+    bc "lotmint/blockchain"
 
     "go.dedis.ch/onet/v3/app"
     "go.dedis.ch/onet/v3/cfgpath"
@@ -187,7 +190,7 @@ func showPeer(c *cli.Context) error {
     if err != nil {
 	    return errors.New("Error: " + err.Error())
     }
-    log.Info("Peers Status\n", resp.List)
+    log.Info("\t", resp.List)
     return nil
 }
 
@@ -199,7 +202,7 @@ func createGenesisBlock(c *cli.Context) error {
     if err != nil {
 	    return errors.New("Error: " + err.Error())
     }
-    log.Info("Create new blockchain successful.\n", resp.Block)
+    log.Infof("Create new blockchain successful.\n\tIndex: %d\n\tHash: %#x", resp.Index, resp.Hash)
     return nil
 
 }
@@ -214,6 +217,49 @@ func cmdTime(c *cli.Context) error {
 	    return errors.New("When asking the time: " + err.Error())
     }
     log.Infof("Children: %d - Time spent: %f", resp.Children, resp.Time)
+    return nil
+}
+
+func getIDPointer(s string) (*bc.BlockID, error) {
+    if strings.HasPrefix(strings.ToLower(s), "0x") {
+        s = s[2:]
+    }
+    if s == "" {
+        return nil, nil
+    }
+    bHash, err := hex.DecodeString(s)
+    if err != nil {
+        return nil, xerrors.Errorf("couldn't decode %s: %+v", s, err)
+    }
+    blockID := bc.BlockID(bHash)
+    return &blockID, nil
+}
+
+func showBlock(c *cli.Context) error {
+    log.Info("Query block")
+    blockID, err := getIDPointer(c.String("hash"))
+    if err != nil {
+        return xerrors.Errorf("couldn't get hash: %+v", err)
+    }
+    blockIndex := c.Int("index")
+    if blockIndex < 0 && blockID == nil {
+        return xerrors.New("need either --index or --hash")
+    }
+
+    group := parseConfig(c)
+    client := lotmint.NewClient()
+
+    var resp *bc.Block
+    var resperr error
+    if blockID != nil {
+        resp, resperr = client.GetBlockByID(group.Roster, *blockID)
+    } else {
+        resp, resperr = client.GetBlockByIndex(group.Roster, blockIndex)
+    }
+    if resperr != nil {
+        return xerrors.Errorf("couldn't get block: %v", resperr.Error())
+    }
+    log.Infof("\tIndex=%d\n\tHash=%#x", resp.Index, resp.Hash)
     return nil
 }
 

@@ -9,7 +9,7 @@ This part of the service runs on the client or the app.
 */
 
 import (
-    "lotmint/service"
+    bc "lotmint/blockchain"
 
     "go.dedis.ch/cothority/v3"
     "go.dedis.ch/onet/v3"
@@ -69,11 +69,33 @@ func (c *Client) Peer(r *onet.Roster, p *Peer) (*PeerReply, error) {
     return reply, nil
 }
 
-func (c *Client) CreateGenesisBlock(r *onet.Roster) (*service.GenesisBlockReply, error) {
+func (c *Client) CreateGenesisBlock(r *onet.Roster) (*bc.Block, error) {
     dst := r.RandomServerIdentity()
     log.Lvl4("Sending message to", dst)
-    reply := &service.GenesisBlockReply{}
-    err := c.SendProtobuf(dst, &service.GenesisBlockRequest{}, reply)
+    reply := &bc.Block{}
+    err := c.SendProtobuf(dst, &GenesisBlockRequest{}, reply)
+    if err != nil {
+        return nil, err
+    }
+    return reply, nil
+}
+
+func (c *Client) GetBlockByID(r *onet.Roster, blockID bc.BlockID) (*bc.Block, error) {
+    dst := r.RandomServerIdentity()
+    log.Lvl4("Sending message to", dst)
+    reply := &bc.Block{}
+    err := c.SendProtobuf(dst, &BlockByIDRequest{blockID}, reply)
+    if err != nil {
+        return nil, err
+    }
+    return reply, nil
+}
+
+func (c *Client) GetBlockByIndex(r *onet.Roster, blockIndex int) (*bc.Block, error) {
+    dst := r.RandomServerIdentity()
+    log.Lvl4("Sending message to", dst)
+    reply := &bc.Block{}
+    err := c.SendProtobuf(dst, &BlockByIndexRequest{blockIndex}, reply)
     if err != nil {
         return nil, err
     }
