@@ -8,5 +8,6 @@ import (
 type BlockID []byte
 
 func init() {
+    network.RegisterMessage(&BlockHeader{})
     network.RegisterMessage(&Block{})
 }

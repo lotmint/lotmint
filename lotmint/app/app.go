@@ -3,20 +3,18 @@ package main
 import (
     "errors"
     "encoding/hex"
-    "net/url"
     "os"
     "path"
     "strings"
 
     lotmint "lotmint"
     bc "lotmint/blockchain"
+    "lotmint/utils"
 
     "go.dedis.ch/onet/v3/app"
     "go.dedis.ch/onet/v3/cfgpath"
     "go.dedis.ch/onet/v3/log"
     "go.dedis.ch/onet/v3/network"
-    "go.dedis.ch/kyber/v3/suites"
-    "go.dedis.ch/kyber/v3/util/encoding"
     "golang.org/x/xerrors"
     "gopkg.in/urfave/cli.v1"
 )
@@ -85,31 +83,6 @@ func parseConfig(c *cli.Context) *app.Group {
     return group
 }
 
-// Convert url string info peer struct
-func convertPeerURL(peerURL string) (*network.ServerIdentity, error) {
-    parse, err := url.Parse(peerURL)
-    if err != nil {
-        return nil, xerrors.Errorf("url parse error: %v", err)
-    }
-    suite, err := suites.Find("Ed25519")
-    if err != nil {
-        return nil, xerrors.Errorf("kyber suite: %v", err)
-    }
-    point, err := encoding.StringHexToPoint(suite, parse.User.Username())
-    if err != nil {
-	return nil, xerrors.Errorf("parsing public key: %v", err)
-    }
-    var connType network.ConnType
-    switch parse.Scheme {
-    case "tcp":
-	connType = network.PlainTCP
-    default:
-        connType = network.TLS
-    }
-    si := network.NewServerIdentity(point, network.NewAddress(connType, parse.Host))
-    return si, nil
-}
-
 // Add new peer node to peer storage
 func addPeer(c *cli.Context) error {
     if c.NArg() < 1 {
@@ -119,7 +92,7 @@ func addPeer(c *cli.Context) error {
     var peers []*network.ServerIdentity
     for i := 0; i < c.NArg(); i++ {
 	peerURL := c.Args().Get(i)
-	si, err := convertPeerURL(peerURL)
+	si, err := utils.ConvertPeerURL(peerURL)
 	if err == nil {
             peers = append(peers, si)
         }
@@ -147,7 +120,7 @@ func delPeer(c *cli.Context) error {
     var peers []*network.ServerIdentity
     for i := 0; i < c.NArg(); i++ {
 	peerURL := c.Args().Get(i)
-	si, err := convertPeerURL(peerURL)
+	si, err := utils.ConvertPeerURL(peerURL)
 	if err == nil {
             peers = append(peers, si)
         }
@@ -171,7 +144,7 @@ func showPeer(c *cli.Context) error {
     var peers []*network.ServerIdentity
     for i := 0; i < c.NArg(); i++ {
 	peerURL := c.Args().Get(i)
-	si, err := convertPeerURL(peerURL)
+	si, err := utils.ConvertPeerURL(peerURL)
 	if err == nil {
             peers = append(peers, si)
         }

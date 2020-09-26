@@ -22,7 +22,7 @@ var genesisHash = BlockID([]byte{
 
 // genesisBlock defines the genesis block of the block chain which serves as the
 // public transaction ledger for the main network.
-var genesisBlock = Block{
+var genesisBlock = &Block{
     BlockHeader: &BlockHeader{
         Index:		0,
         Version:	1,
@@ -33,9 +33,11 @@ var genesisBlock = Block{
 	MerkleRoot:	genesisMerkleRoot,
 	Data:		make([]byte, 0),
     },
-    Hash:	genesisHash,
+    Hash:		genesisHash,
+    Payload:		make([]byte, 0),
+    Transactions:	make([]*Transaction, 0),
 }
 
 func GetGenesisBlock() *Block{
-    return &genesisBlock
+    return genesisBlock
 }

@@ -25,9 +25,30 @@ type BlockHeader struct {
     Data []byte
 }
 
+func (bh *BlockHeader) Copy() *BlockHeader {
+    prevBlock := make(BlockID, len(bh.PrevBlock))
+    copy(prevBlock, bh.PrevBlock)
+    merkleRoot := make(BlockID, len(bh.MerkleRoot))
+    copy(merkleRoot, bh.MerkleRoot)
+    data := make([]byte, len(bh.Data))
+    copy(data, bh.Data)
+    return &BlockHeader{
+        Index:		bh.Index,
+	Version:	bh.Version,
+	Bits:		bh.Bits,
+	Nonce:		bh.Nonce,
+	Timestamp:	bh.Timestamp,
+	PrevBlock:	prevBlock,
+	MerkleRoot:	merkleRoot,
+	Data:		data,
+    }
+}
+
 type Block struct {
     *BlockHeader
     Hash []byte
+    // Public Key
+    PublicKey string
     // Payload is additional data that needs to be hashed by the application
     // itself into BlockHeader.Data.
     Payload []byte `protobuf:"opt"`
@@ -65,6 +86,23 @@ func (b *Block) CalculateHash() (BlockID, error) {
     hash.Write(b.PrevBlock)
     hash.Write(b.MerkleRoot)
     hash.Write(b.Data)
+    // hash.Write([]byte(b.PublicKey))
     buf := hash.Sum(nil)
     return buf, nil
+}
+
+// Copy makes a deep copy of the Block
+func (b *Block) Copy() *Block {
+    if b == nil {
+        return nil
+    }
+    block := &Block{
+        BlockHeader:	b.BlockHeader.Copy(),
+	Hash:		make([]byte, len(b.Hash)),
+	Payload:	make([]byte, len(b.Payload)),
+	Transactions:	make([]*Transaction, len(b.Transactions)),
+    }
+    copy(block.Hash, b.Hash)
+    copy(block.Payload, b.Payload)
+    return block
 }

@@ -1,10 +1,13 @@
 package service
 
 import (
+    "math/rand"
     "sync"
 
-    bbolt "go.etcd.io/bbolt"
     bc "lotmint/blockchain"
+    "lotmint/blscosi"
+
+    bbolt "go.etcd.io/bbolt"
     "go.dedis.ch/onet/v3/log"
     "go.dedis.ch/onet/v3/network"
     "golang.org/x/xerrors"
@@ -40,12 +43,56 @@ type ServiceMessage struct {
     Message string
 }
 
+type BlockMessage struct {
+    Type int // 0:CandidateBlock,1:RefererBlock,2:TxBlock
+    Block *bc.Block
+}
+
+type HandshakeMessage struct {
+    GenesisID BlockID
+    LatestBlock *bc.Block
+    Answer  bool
+}
+
+type DownloadBlockRequest struct {
+    GenesisID BlockID
+    Start int
+    Size int
+}
+
+type DownloadBlockResponse struct {
+    Blocks []*bc.Block
+    GenesisID BlockID
+}
+
+// SignatureRequest is what the Cosi service is expected to receive from clients.
+type SignatureRequest struct {
+    // ServerIdentity	*network.ServerIdentity
+    Message []byte
+    // Roster  *onet.Roster
+}
+
+// SignatureResponse is what the Cosi service will reply to clients.
+type SignatureResponse struct {
+    Hash      []byte
+    Responses []*blscosi.Response
+    // Signature protocol.BlsSignature
+}
+
+type RemoteServerIndex struct {
+    Index int
+    ServerIdentity *network.ServerIdentity
+}
+
 type BlockDB struct {
     *bbolt.DB
     bucketName []byte
     latestBlockID BlockID
     latestMutex sync.Mutex
     blockIndexMap map[int]BlockID
+    // Cached previous N referer blocks for searching quickly
+    refererBlocks []*bc.Block
+    refererMutex sync.Mutex
 }
 
 // NewBlockDB returns an initialized BlockDB structure.
@@ -54,6 +101,7 @@ func NewBlockDB(db *bbolt.DB, bn[]byte) *BlockDB {
 		DB: db,
 		bucketName: bn,
 		blockIndexMap: make(map[int]BlockID),
+		refererBlocks: make([]*bc.Block, 0),
 	}
 }
 
@@ -71,7 +119,7 @@ func (db *BlockDB) storeToTx(tx *bbolt.Tx, block *bc.Block) (BlockID, error) {
 // nil is returned if the key does not exist.
 func (db *BlockDB) getFromTx(tx *bbolt.Tx, sbID BlockID) (*bc.Block, error) {
 	if sbID == nil {
-		return nil, xerrors.New("cannot look up skipblock with ID == nil")
+		return nil, xerrors.New("cannot look up block with ID == nil")
 	}
 
 	val := tx.Bucket(db.bucketName).Get(sbID)
@@ -88,8 +136,7 @@ func (db *BlockDB) getFromTx(tx *bbolt.Tx, sbID BlockID) (*bc.Block, error) {
 		return nil, err
 	}
 
-	//return sbMsg.(*bc.Block).Copy(), nil
-	return sbMsg.(*bc.Block), nil
+	return sbMsg.(*bc.Block).Copy(), nil
 }
 
 // Stores the set of blocks in the boltdb
@@ -119,6 +166,17 @@ func (db *BlockDB) Store(block *bc.Block) BlockID {
 	}
 	return nil
 }
+
+// GetGenesisID
+func (db *BlockDB) GetGenesisID() (BlockID) {
+    blockID, ok := db.blockIndexMap[0]
+    if !ok {
+	log.Error("no genesis block found")
+        return nil
+    }
+    return blockID
+}
+
 
 // GetLatest searches for the latest available block.
 func (db *BlockDB) GetLatest() (*bc.Block) {
@@ -167,8 +225,7 @@ func (db *BlockDB) BuildIndex() error {
 	    if err != nil {
                 return err
 	    }
-	    block := msg.(*bc.Block)
-	    //block := msg.(*bc.Block).Copy()
+	    block := msg.(*bc.Block).Copy()
 	    log.Lvlf3("Loading block %d / %x", block.Index, block.Hash)
 	    db.blockIndexMap[block.Index] = BlockID(k)
             db.UpdateLatest(block.Hash)
@@ -186,18 +243,66 @@ func (db *BlockDB) GetBlockByIndex(blockIndex int) (*bc.Block, error) {
     return block, nil
 }
 
-// blockBuffer will cache a proposed block when the conode has
+func (db *BlockDB) AppendRefererBlock(block *bc.Block) {
+    db.refererMutex.Lock()
+    defer db.refererMutex.Unlock()
+    if len(db.refererBlocks) >= COSI_MEMBERS {
+        db.refererBlocks = db.refererBlocks[len(db.refererBlocks)-COSI_MEMBERS+1:]
+    }
+    db.refererBlocks = append(db.refererBlocks, block.Copy())
+}
+
+func (db *BlockDB) GetLatestRefererBlock() *bc.Block {
+    db.refererMutex.Lock()
+    defer db.refererMutex.Unlock()
+    if len(db.refererBlocks) == 0 {
+        return nil
+    }
+    return db.refererBlocks[len(db.refererBlocks)-1]
+}
+
+func (db *BlockDB) GetRefererBlocks() []*bc.Block {
+    db.refererMutex.Lock()
+    defer db.refererMutex.Unlock()
+    return db.refererBlocks
+}
+
+func (db *BlockDB) GetLeaderKey() string {
+    block := db.GetLatestRefererBlock()
+    if block != nil {
+        return block.PublicKey
+    }
+    return ""
+}
+
+// blockBuffer will cache a referer block when the conode has
 // verified it and it will later store it in the DB after the protocol
 // has succeeded.
 // Blocks are stored per skipchain to prevent the cache to grow and it
 // is cleared after a new block is added
 type blockBuffer struct {
-	buffer map[string]*bc.Block
+        blocks []*bc.Block
 	sync.Mutex
 }
 
 func newBlockBuffer() *blockBuffer {
-    return &blockBuffer{
-        buffer: make(map[string]*bc.Block),
+    return &blockBuffer{}
+}
+
+func (bb *blockBuffer) Append(block *bc.Block) {
+    bb.Lock()
+    defer bb.Unlock()
+    bb.blocks = append(bb.blocks, block.Copy())
+}
+
+func (bb *blockBuffer) Choice() *bc.Block {
+    bb.Lock()
+    defer func() {
+	bb.blocks = bb.blocks[:0]
+	bb.Unlock()
+    }()
+    if len(bb.blocks) == 0 {
+        return nil
     }
+    return bb.blocks[rand.Intn(len(bb.blocks))]
 }
