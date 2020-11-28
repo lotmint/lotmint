@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"math/rand"
+    "net"
 	// "fmt"
 	"sync"
 	"time"
@@ -14,12 +15,14 @@ import (
 	"lotmint/mining"
 	"lotmint/protocol"
 
+
     "go.dedis.ch/kyber/v3/pairing"
 	"go.dedis.ch/kyber/v3/util/random"
 	"go.dedis.ch/onet/v3"
 	"go.dedis.ch/onet/v3/log"
 	"go.dedis.ch/onet/v3/network"
-        "golang.org/x/xerrors"
+	"go.dedis.ch/protobuf"
+    "golang.org/x/xerrors"
 )
 
 var serviceID onet.ServiceID
@@ -36,6 +39,8 @@ var (
 
     proxyRequestId network.MessageTypeID
     proxyResponseId network.MessageTypeID
+
+    addressMessageId network.MessageTypeID
 )
 
 var suite = pairing.NewSuiteBn256()
@@ -55,6 +60,8 @@ func init() {
 
     proxyRequestId = network.RegisterMessage(&ProxyRequest{})
     proxyResponseId = network.RegisterMessage(&ProxyResponse{})
+
+    addressMessageId = network.RegisterMessage(&AddressMessage{})
 }
 
 // Nonce is used to prevent replay attacks in instructions.
@@ -86,6 +93,8 @@ type Service struct {
 
     peerStorage *peerStorage
 
+    proxyStorage *peerStorage
+
     synChan chan RemoteServerIndex
 
     synDone bool
@@ -106,6 +115,8 @@ type Service struct {
 
     miner *mining.Miner
 
+    udpConn *net.UDPConn
+
     proxyResponseChan chan ProxyResponse
 
     signatureResponseChan chan SignatureResponse
@@ -114,6 +125,8 @@ type Service struct {
 var storageID = []byte("main")
 
 var peerStorageID = []byte("peers")
+
+var proxyStorageID = []byte("proxies")
 
 // storage is used to save our data.
 type storage struct {
@@ -175,7 +188,7 @@ func (s *Service) Peer(req *lotmint.Peer) (*lotmint.PeerReply, error) {
 	}
 	if len(peers) > 0 {
 	    go s.AddPeerServerIdentity(peers, true)
-        }
+    }
     case "del":
 	for _, peerNode := range req.PeerNodes{
 	    if _, ok := s.peerStorage.peerNodeMap[peerNode.Public.String()]; ok {
@@ -200,10 +213,133 @@ func (s *Service) Peer(req *lotmint.Peer) (*lotmint.PeerReply, error) {
     return resp, nil
 }
 
+// Proxy Operation
+func (s *Service) Proxy(req *lotmint.Proxy) (*lotmint.PeerReply, error) {
+    s.proxyStorage.Lock()
+    defer s.proxyStorage.Unlock()
+    var peers []*network.ServerIdentity
+    var resp = &lotmint.PeerReply{}
+    log.Lvl3("Proxy command:", req.Command)
+    switch req.Command {
+    case "add":
+	    for _, peerNode := range req.PeerNodes{
+            if peerNode.Public == nil {
+                peerNode.Public = s.ServerIdentity().Public
+            }
+	        if _, ok := s.proxyStorage.peerNodeMap[peerNode.String()]; !ok {
+	            s.proxyStorage.peerNodeMap[peerNode.String()] = peerNode
+                peers = append(peers, peerNode)
+                go s.BroadcastAddressTx(&AddressMessage{
+                    Address: peerNode,
+                })
+	        }
+	    }
+        if len(peers) > 0 {
+        }
+    case "del":
+	    for _, peerNode := range req.PeerNodes{
+	        if _, ok := s.proxyStorage.peerNodeMap[peerNode.String()]; ok {
+	            delete(s.proxyStorage.peerNodeMap, peerNode.String())
+                peers = append(peers, peerNode)
+	        }
+	    }
+    case "show":
+	    if len(req.PeerNodes) > 0 {
+	        peers = req.PeerNodes
+	    } else {
+	        for _, val := range s.proxyStorage.peerNodeMap {
+                peers = append(peers, val)
+            }
+	    }
+    default:
+        return nil, xerrors.New("Command not supported")
+    }
+    resp.List = peers
+    return resp, nil
+}
+
 // Broadcast message
 func (s *Service) BroadcastBlock(block *bc.Block, type_ int) {
     for _, peer := range s.peerStorage.peerNodeMap {
         if err := s.SendRaw(peer, &BlockMessage{type_, block}); err != nil {
+            log.Error(err)
+        }
+    }
+}
+
+// Broadcast block to all BFT members
+func (s *Service) broadcastBlockToBFT(block *bc.Block) {
+    latestBlock := s.db.GetLatest()
+    if latestBlock == nil {
+        log.Error("Blockchain not actived")
+        return
+    }
+    tmpBlock := latestBlock.Copy()
+
+    var memberMap map[string]bool
+    for i := 0; i < COSI_MEMBERS; i++ {
+        memberMap[tmpBlock.PublicKey] = true
+        if tmpBlock.PrevBlock == nil {
+            break
+        }
+        tmpBlock := s.db.GetByID(BlockID(tmpBlock.PrevBlock))
+        if tmpBlock == nil {
+            log.Error("Incomplete local blockchain")
+            break
+        }
+    }
+
+    for key, _ := range memberMap {
+        if key == s.publicKey() {
+            s.blockBuffer.Append(block)
+        } else if peer, ok := s.peerStorage.peerNodeMap[key]; ok {
+            if err := s.SendRaw(peer, &BlockMessage{CandidateBlock, block}); err != nil {
+                log.Error(err)
+            }
+        }
+    }
+
+    if len(memberMap) == 0 {
+        log.Error("BFT members is empty")
+    }
+}
+
+func (s *Service) BroadcastBlockToProxies(block *bc.Block) {
+    latest := s.db.GetLatest()
+    if latest == nil {
+        log.Errorf("Leader not found")
+        return
+    }
+    for _, addr := range latest.Addresses {
+        // Instead of udp protocol
+	    /*if peer, ok := s.proxyStorage.peerNodeMap[addr.String()]; ok {
+            if err := s.SendRaw(peer, &BlockMessage{ProxyCandidateBlock, block}); err != nil {
+                log.Error(err)
+            }
+        }*/
+        address := addr.Address.Host() + ":" + addr.Address.Port()
+        log.Lvlf3("Connecting %s", address)
+        conn, err := net.Dial(UDP, address)
+        if err != nil {
+            log.Error(err)
+            conn.Close()
+            continue
+        }
+        buf, err := protobuf.Encode(block)
+        if err != nil {
+            log.Error(err)
+            conn.Close()
+            continue
+        }
+        conn.Write(buf)
+        // conn.Read(buf)
+        conn.Close()
+    }
+}
+
+func (s *Service) BroadcastAddressTx(addrTx *AddressMessage) {
+    for _, peer := range s.peerStorage.peerNodeMap {
+        if err := s.SendRaw(peer, addrTx); err != nil {
             log.Error(err)
         }
     }
@@ -217,10 +353,14 @@ func (s *Service) CreateGenesisBlock(req *lotmint.GenesisBlockRequest) (*bc.Bloc
         return nil, errors.New("You have already joined blockchain.")
     }
     genesisBlock := bc.GetGenesisBlock()
-    genesisBlock.PublicKey = s.ServerIdentity().Public.String()
+
+    // Store and broadcast block
+    s.db.Store(genesisBlock)
+    s.db.UpdateLatest(genesisBlock)
+    s.BroadcastBlock(genesisBlock, RefererBlock)
 
     // Start local mining
-    go s.startMiner(genesisBlock)
+    go s.startTimer(genesisBlock)
 
     return genesisBlock, nil
 }
@@ -241,6 +381,7 @@ func (s *Service) startTimer(block *bc.Block) {
     case <-time.After(60 * time.Second):
         s.timerRunning = false
     }
+    log.Lvlf3("timer finished (%v)", time.Now().Format("2020-12-30 00:00:00"))
 
     // Notify stop local mining
     s.stopMiner()
@@ -301,7 +442,7 @@ func (s *Service) handleProxyRequest(env *network.Envelope) error {
         return xerrors.New("ProxyRequest block is nil")
     }
     latestBlock := s.db.GetLatest()
-    if latestBlock != nil {
+    if latestBlock == nil {
         return xerrors.New("Blockchain not actived")
     }
 
@@ -457,6 +598,14 @@ func (s *Service) save() {
     if err != nil {
         log.Error("Couldn't save peer data:", err)
     }
+
+    // Save proxies data
+    s.proxyStorage.Lock()
+    defer s.proxyStorage.Unlock()
+    err = s.Save(proxyStorageID, s.proxyStorage)
+    if err != nil {
+        log.Error("Couldn't save proxy data:", err)
+    }
 }
 
 // Sync block with other peer node
@@ -479,33 +628,46 @@ func (s *Service) handshake() {
 // Tries to load the configuration and updates the data in the service
 // if it finds a valid config-file.
 func (s *Service) tryLoad() error {
-    s.storage = &storage{}
     msg, err := s.Load(storageID)
     if err != nil {
         return err
     }
-    if msg == nil {
-        return nil
-    }
     var ok bool
-    s.storage, ok = msg.(*storage)
-    if !ok {
-       return errors.New("Data of wrong type")
+    if msg != nil {
+        //s.storage = &storage{}
+        s.storage, ok = msg.(*storage)
+        if !ok {
+           return errors.New("Data of wrong type")
+        }
     }
 
     // Load peers data
-    s.peerStorage = &peerStorage{}
     msg, err = s.Load(peerStorageID)
     if err != nil {
         return err
     }
-    if msg == nil {
-        return nil
+    if msg != nil {
+        //s.peerStorage = &peerStorage{}
+        s.peerStorage, ok = msg.(*peerStorage)
+        if !ok {
+           return errors.New("Peer data of wrong type")
+        }
+    } else {
     }
-    s.peerStorage, ok = msg.(*peerStorage)
-    if !ok {
-       return errors.New("Peer data of wrong type")
+
+    // Load proxies data
+    msg, err = s.Load(proxyStorageID)
+    if err != nil {
+        return err
     }
+    if msg != nil {
+        //s.proxyStorage = &peerStorage{}
+        s.proxyStorage, ok = msg.(*peerStorage)
+        if !ok {
+           return errors.New("Proxy data of wrong type")
+        }
+    }
+
     s.handshake()
 
     return nil
@@ -516,27 +678,28 @@ func (s *Service) publicKey() string {
 }
 
 func (s *Service) isLeader() bool {
-    leaderKey := s.db.GetLeaderKey()
-    if leaderKey == "" {
-        return false
+    latest := s.db.GetLatest()
+    if latest != nil {
+        // log.Lvlf3("BlockchanKey: %s, PublicKey: %s", latest.PublicKey, s.publicKey())
+        return latest.PublicKey == s.publicKey()
     }
-    return leaderKey == s.publicKey()
+    return false
 }
 
 func (s *Service) AddPeerServerIdentity(peers []*network.ServerIdentity, needConn bool) {
     s.peerStorage.Lock()
     defer s.peerStorage.Unlock()
     for _, peer := range peers {
-	// Self ServerIdentity
+	    // Self ServerIdentity
         // s.ServerIdentity()
-	if needConn {
-	    err := s.SendRaw(peer, &ServiceMessage{"Test Service Message"})
-	    if err != nil {
+	    if needConn {
+	        err := s.SendRaw(peer, &ServiceMessage{"Test Service Message"})
+	        if err != nil {
                 log.Error(err)
                 continue
-	    }
+	        }
         }
-	s.peerStorage.peerNodeMap[peer.Public.String()] = peer
+	    s.peerStorage.peerNodeMap[peer.Public.String()] = peer
     }
 }
 
@@ -545,7 +708,7 @@ func (s *Service) RemovePeerServerIdentity(peers []*network.ServerIdentity) {
     defer s.peerStorage.Unlock()
     for _, peer := range peers {
         if _, ok := s.peerStorage.peerNodeMap[peer.Public.String()]; ok {
-	    delete(s.peerStorage.peerNodeMap, peer.Public.String())
+	        delete(s.peerStorage.peerNodeMap, peer.Public.String())
         }
     }
 }
@@ -607,6 +770,7 @@ func (s *Service) processMessage(n int) {
 }
 
 func (s *Service) runProposal() {
+    log.Info("Leader starting to refer block")
     latest := s.db.GetLatest()
     if latest == nil {
         log.Error("Blockchain not actived")
@@ -619,7 +783,7 @@ func (s *Service) runProposal() {
     blocks := s.blockBuffer.Choice()
     if len(blocks) == 0 {
         // TODO: Retransmission Message
-        log.Error("No candidate blocks")
+        log.Warn("No candidate blocks: reset")
         return
     }
     var blockKeyMap map[string]bool
@@ -632,7 +796,7 @@ func (s *Service) runProposal() {
     proposalBlock := blocks[0]
     proposalBlock.OrderBlocks = blocks[1:]
     for _, addr := range latest.Addresses {
-        if peer, ok := s.peerStorage.peerNodeMap[addr.Key]; ok {
+        if peer, ok := s.peerStorage.peerNodeMap[addr.Public.String()]; ok {
             success++
             name := peer.Address.String()
             wg.Add(1)
@@ -682,6 +846,9 @@ func (s *Service) runProposal() {
             proposalBlock.OrderBlocks = append(proposalBlock.OrderBlocks, blockMap[key])
         }
     }
+    // Store and broadcast block
+    s.db.Store(proposalBlock)
+    s.db.UpdateLatest(proposalBlock)
     s.BroadcastBlock(proposalBlock, RefererBlock)
 }
 
@@ -751,6 +918,24 @@ func (s *Service) handleMessageReq(env *network.Envelope) error {
     return nil
 }
 
+// handleAddressMessage
+func (s *Service) handleAddressMessage(env *network.Envelope) error {
+    req, ok := env.Msg.(*AddressMessage)
+    if !ok {
+        return xerrors.Errorf("%v failed to cast to AddressMessage", s.ServerIdentity())
+    }
+    log.Lvl3("req:", req)
+    if req.Address != nil {
+	    if _, ok := s.proxyStorage.peerNodeMap[req.Address.String()]; !ok {
+	        s.proxyStorage.peerNodeMap[req.Address.String()] = req.Address
+        }
+        s.BroadcastAddressTx(&AddressMessage{
+            Address: req.Address,
+        })
+    }
+    return nil
+}
+
 // handleBlockMessage
 func (s *Service) handleBlockMessage(env *network.Envelope) error {
     req, ok := env.Msg.(*BlockMessage)
@@ -771,9 +956,27 @@ func (s *Service) handleBlockMessage(env *network.Envelope) error {
         }
     }
     switch req.Type {
+        // Deprecate: instead of udp
+        /*case ProxyCandidateBlock:
+	        peer, ok := s.peerStorage.peerNodeMap[block.PublicKey]
+            if !ok {
+                err := xerrors.New("leader disconnected")
+                log.Error(err)
+                return err
+            }
+            if err := s.SendRaw(peer, &BlockMessage{CandidateBlock, block}); err != nil {
+                log.Error(err)
+                return err
+            }*/
         case CandidateBlock:
-	        s.processCandidateBlock(block)
+            // Add block into blockBuffer
+            s.blockBuffer.Append(block)
         case RefererBlock:
+            _block := s.db.GetByID(block.Hash)
+            if _block != nil {
+                log.Infof("Block '%d' already exists", block.Hash)
+                return nil
+            }
 	        b, err := s.db.GetBlockByIndex(block.Index)
 	        if b != nil && err == nil {
                 /*if req.Block.Index == 0 && bytes.Compare(b.Hash, req.Block.Hash) == 0 {
@@ -868,6 +1071,51 @@ func (s *Service) handleDownloadBlockResponse(env *network.Envelope) error {
     return nil
 }
 
+func (s *Service) handleUDPRequest() {
+    for {
+        buf := make([]byte, UDP_BUFFER_SIZE)
+        l, cAddr, err := s.udpConn.ReadFromUDP(buf)
+        if err != nil {
+            log.Error(err)
+            continue
+        }
+        log.Infof("Receive data[%d] from %s", l, cAddr)
+        block := bc.NewBlock()
+        //err = protobuf.DecodeWithConstructors(buf, block, network.DefaultConstructors(suite))
+        err = protobuf.DecodeWithConstructors(buf, block, nil)
+		if err != nil {
+            log.Error(err)
+            continue
+		}
+
+        /*s.udpConn.WriteToUDP([]byte(), cAddr)
+        if err != nil {
+            log.Error(err)
+            return
+        }*/
+        // TODO: Broadcast to all BFT members
+        go s.broadcastBlockToBFT(block)
+    }
+    defer s.udpConn.Close()
+}
+
+func (s *Service) startUDPServer() error {
+    // Starting UDP Server for client puzzle
+    address := ":" + s.ServerIdentity().Address.Port()
+    log.Infof("Starting udp server on address udp://0.0.0.0%s", address)
+    udpAddr, _ := net.ResolveUDPAddr(UDP, address)
+    udpConn, err := net.ListenUDP(UDP, udpAddr)
+    if err != nil {
+        log.Error(err)
+        return err
+    }
+
+    s.udpConn = udpConn
+    go s.handleUDPRequest()
+
+    return nil
+}
+
 // newService receives the context that holds information about the node it's
 // running on. Saving and loading can be done using the context. The data will
 // be stored in memory for tests and simulations, and on disk for real deployments.
@@ -881,6 +1129,9 @@ func newService(c *onet.Context) (onet.Service, error) {
 	    peerStorage: &peerStorage{
 	        peerNodeMap: make(map[string]*network.ServerIdentity),
 	    },
+	    proxyStorage: &peerStorage{
+            peerNodeMap: make(map[string]*network.ServerIdentity),
+        },
 	    synChan: make(chan RemoteServerIndex, 1),
 	    synDone: false,
 	    proposalChan: make(chan bool, 1),
@@ -891,15 +1142,19 @@ func newService(c *onet.Context) (onet.Service, error) {
 	    proxyResponseChan: make(chan ProxyResponse),
 	    signatureResponseChan: make(chan SignatureResponse),
     }
+    if err := s.startUDPServer(); err != nil {
+        log.Error(err)
+        return nil, err
+    }
     s.miner = mining.New(s.minerCallback)
     if err := s.db.BuildIndex(); err != nil {
         log.Error(err)
-	return nil, err
+        return nil, err
     }
     if err := s.RegisterHandlers(s.Clock, s.Count); err != nil {
         return nil, errors.New("Couldn't register handlers")
     }
-    if err := s.RegisterHandlers(s.Peer, s.CreateGenesisBlock, s.GetBlockByID, s.GetBlockByIndex); err != nil {
+    if err := s.RegisterHandlers(s.Peer, s.Proxy, s.CreateGenesisBlock, s.GetBlockByID, s.GetBlockByIndex); err != nil {
         return nil, errors.New("Couldn't register handlers")
     }
     // s.ServiceProcessor.RegisterStatusReporter("BlockDB", s.db)
@@ -913,16 +1168,31 @@ func newService(c *onet.Context) (onet.Service, error) {
 
     s.RegisterProcessorFunc(proxyRequestId,  s.handleProxyRequest)
     s.RegisterProcessorFunc(proxyResponseId, s.handleProxyResponse)
+
+    s.RegisterProcessorFunc(addressMessageId, s.handleAddressMessage)
+
     if err := s.tryLoad(); err != nil {
         log.Error(err)
-	return nil, err
+	    return nil, err
     }
     go s.mainLoop()
     return s, nil
 }
 
 func (s *Service) startMiner(block *bc.Block) {
-    s.miner.Start(block)
+    templateBlock := block.Copy()
+    var addrKey []string
+    for key, _ := range s.proxyStorage.peerNodeMap {
+        addrKey = append(addrKey, key)
+    }
+    n := COSI_MEMBERS
+    for n > 0 && len(addrKey) > 0 {
+        index := rand.Intn(len(addrKey))
+        templateBlock.Addresses = append(templateBlock.Addresses, s.proxyStorage.peerNodeMap[addrKey[index]])
+        addrKey = append(addrKey[:index], addrKey[index+1:]...)
+        n--
+    }
+    s.miner.Start(templateBlock)
 }
 
 func (s *Service) stopMiner() {
@@ -932,7 +1202,7 @@ func (s *Service) stopMiner() {
 func (s *Service) minerCallback(block *bc.Block) {
     // TODO: abort mined block if after 2Delta
 
-    // Genesis block
+    // Deprecated: Genesis block
     if s.db.GetLatest() == nil {
         if block.Index > 0 {
             panic("Local status out of sync")
@@ -942,19 +1212,7 @@ func (s *Service) minerCallback(block *bc.Block) {
         s.db.UpdateLatest(block)
         s.BroadcastBlock(block, RefererBlock)
     } else {
-        s.processCandidateBlock(block)
-    }
-}
-
-func (s *Service) processCandidateBlock(block *bc.Block) {
-    if s.isLeader() {
-        if s.timerRunning {
-            // Add block into blockBuffer
-            s.blockBuffer.Append(block)
-        } else {
-            log.Warnf("Drop timeout block: %v", block)
-        }
-    } else {
-        s.BroadcastBlock(block, CandidateBlock)
+        // Send miner block into leader gateways
+        s.BroadcastBlockToProxies(block)
     }
 }

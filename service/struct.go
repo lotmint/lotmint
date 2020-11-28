@@ -83,6 +83,10 @@ type ProxyResponse struct {
     BlockMap map[string]*bc.Block
 }
 
+type AddressMessage struct {
+    Address *network.ServerIdentity
+}
+
 type RemoteServerIndex struct {
     Index int
     ServerIdentity *network.ServerIdentity
@@ -94,9 +98,6 @@ type BlockDB struct {
     latestBlockID BlockID
     latestMutex sync.Mutex
     blockIndexMap map[int]BlockID
-    // Cached previous N referer blocks for searching quickly
-    refererBlocks []*bc.Block
-    refererMutex sync.Mutex
 }
 
 // NewBlockDB returns an initialized BlockDB structure.
@@ -105,13 +106,12 @@ func NewBlockDB(db *bbolt.DB, bn[]byte) *BlockDB {
 		DB: db,
 		bucketName: bn,
 		blockIndexMap: make(map[int]BlockID),
-		refererBlocks: make([]*bc.Block, 0),
 	}
 }
 
 // storeToTx stores the block into the database.
 func (db *BlockDB) storeToTx(tx *bbolt.Tx, block *bc.Block) (BlockID, error) {
-        log.Lvlf2("Storing block %d / %x", block.Index, block.Hash)
+    log.Lvlf2("Storing block %d / %x", block.Index, block.Hash)
 	val, err := network.Marshal(block)
 	if err != nil {
 		return nil, err
@@ -205,11 +205,11 @@ func (db *BlockDB) GetByID(bID BlockID) *bc.Block {
     }
     err := db.View(func(tx *bbolt.Tx) error {
         block, err := db.getFromTx(tx, bID)
-	if err != nil {
-	    return err
-	}
-	result = block
-	return nil
+	    if err != nil {
+	        return err
+	    }
+	    result = block
+	    return nil
     })
 
     if err != nil {
@@ -248,38 +248,6 @@ func (db *BlockDB) GetBlockByIndex(blockIndex int) (*bc.Block, error) {
     return block, nil
 }
 
-func (db *BlockDB) AppendRefererBlock(block *bc.Block) {
-    db.refererMutex.Lock()
-    defer db.refererMutex.Unlock()
-    if len(db.refererBlocks) >= COSI_MEMBERS {
-        db.refererBlocks = db.refererBlocks[len(db.refererBlocks)-COSI_MEMBERS+1:]
-    }
-    db.refererBlocks = append(db.refererBlocks, block.Copy())
-}
-
-func (db *BlockDB) GetLatestRefererBlock() *bc.Block {
-    db.refererMutex.Lock()
-    defer db.refererMutex.Unlock()
-    if len(db.refererBlocks) == 0 {
-        return nil
-    }
-    return db.refererBlocks[len(db.refererBlocks)-1]
-}
-
-func (db *BlockDB) GetRefererBlocks() []*bc.Block {
-    db.refererMutex.Lock()
-    defer db.refererMutex.Unlock()
-    return db.refererBlocks
-}
-
-func (db *BlockDB) GetLeaderKey() string {
-    block := db.GetLatestRefererBlock()
-    if block != nil {
-        return block.PublicKey
-    }
-    return ""
-}
-
 // blockBuffer will cache a referer block when the conode has
 // verified it and it will later store it in the DB after the protocol
 // has succeeded.
@@ -304,9 +272,10 @@ func (bb *blockBuffer) Choice() []*bc.Block {
     bb.Lock()
 	defer bb.Unlock()
 
-    selectedIndex := rand.Intn(len(bb.blocks))
-    bb.blocks[0], bb.blocks[selectedIndex] = bb.blocks[selectedIndex], bb.blocks[0]
-
+    if len(bb.blocks) > 0 {
+        selectedIndex := rand.Intn(len(bb.blocks))
+        bb.blocks[0], bb.blocks[selectedIndex] = bb.blocks[selectedIndex], bb.blocks[0]
+    }
     return bb.blocks
 }
 

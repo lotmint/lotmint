@@ -167,6 +167,95 @@ func showPeer(c *cli.Context) error {
     return nil
 }
 
+// Add new proxy addresses to proxy storage
+func addProxy(c *cli.Context) error {
+    if c.NArg() < 1 {
+	    return xerrors.New("please give the following arguments: " +
+	        "host[:port] [host[:port]]...")
+    }
+    var peers []*network.ServerIdentity
+    for i := 0; i < c.NArg(); i++ {
+	    peerURL := c.Args().Get(i)
+        if strings.Index(peerURL, "://") < 0 {
+            peerURL = "tls://" + peerURL;
+        }
+	    si, err := utils.ConvertPeerURL(peerURL)
+	    if err == nil {
+            peers = append(peers, si)
+        } else {
+            log.Warn(err.Error())
+        }
+    }
+    log.Info("Add peers:", peers)
+    group := parseConfig(c)
+    client := lotmint.NewClient()
+    resp, err := client.Peer(group.Roster, &lotmint.Proxy{
+        Command: "add",
+	    PeerNodes: peers,
+    })
+    if err != nil {
+	    return errors.New("Error: " + err.Error())
+    }
+    log.Info("Finished to add peers", resp.List)
+    return nil
+}
+
+// Delete new peer node from peer storage
+func delProxy(c *cli.Context) error {
+    if c.NArg() < 1 {
+	    return xerrors.New("please give the following arguments: " +
+	        "host[:port] [host[:port]]...")
+    }
+    var peers []*network.ServerIdentity
+    for i := 0; i < c.NArg(); i++ {
+	    peerURL := c.Args().Get(i)
+	    si, err := utils.ConvertPeerURL(peerURL)
+	    if err == nil {
+                peers = append(peers, si)
+        }
+    }
+    log.Info("Remove peers: ", peers)
+    group := parseConfig(c)
+    client := lotmint.NewClient()
+    resp, err := client.Peer(group.Roster, &lotmint.Proxy{
+        Command: "del",
+	    PeerNodes: peers,
+    })
+    if err != nil {
+	    return errors.New("Error: " + err.Error())
+    }
+    log.Info("Finished to remove peers", resp.List)
+    return nil
+}
+
+// Show peer status
+func showProxy(c *cli.Context) error {
+    var peers []*network.ServerIdentity
+    for i := 0; i < c.NArg(); i++ {
+	peerURL := c.Args().Get(i)
+	si, err := utils.ConvertPeerURL(peerURL)
+	if err == nil {
+            peers = append(peers, si)
+        }
+    }
+    if len(peers) > 0 {
+        log.Info("Show peers: ", peers)
+    } else {
+        log.Info("Show all peers")
+    }
+    group := parseConfig(c)
+    client := lotmint.NewClient()
+    resp, err := client.Peer(group.Roster, &lotmint.Proxy{
+        Command: "show",
+	    PeerNodes: peers,
+    })
+    if err != nil {
+	    return errors.New("Error: " + err.Error())
+    }
+    log.Info("\t", resp.List)
+    return nil
+}
+
 // Create the genesis block to start new blockchain.
 func createGenesisBlock(c *cli.Context) error {
     group := parseConfig(c)

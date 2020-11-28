@@ -3,6 +3,7 @@ package utils
 import (
     "net/url"
 
+    "go.dedis.ch/kyber/v3"
     "go.dedis.ch/kyber/v3/suites"
     "go.dedis.ch/kyber/v3/util/encoding"
     "go.dedis.ch/onet/v3/network"
@@ -19,14 +20,18 @@ func ConvertPeerURL(peerURL string) (*network.ServerIdentity, error) {
     if err != nil {
         return nil, xerrors.Errorf("kyber suite: %v", err)
     }
-    point, err := encoding.StringHexToPoint(suite, parse.User.Username())
-    if err != nil {
-	return nil, xerrors.Errorf("parsing public key: %v", err)
+    var point kyber.Point
+    if parse.User.Username() != "" {
+        var err error
+        point, err = encoding.StringHexToPoint(suite, parse.User.Username())
+        if err != nil {
+	        return nil, xerrors.Errorf("parsing public key error: %v", err)
+        }
     }
     var connType network.ConnType
     switch parse.Scheme {
     case "tcp":
-	connType = network.PlainTCP
+	    connType = network.PlainTCP
     default:
         connType = network.TLS
     }

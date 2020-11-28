@@ -14,3 +14,8 @@ const (
     ProposalBlock = 2
     TxBlock = 3
 )
+
+const (
+    UDP = "udp"
+    UDP_BUFFER_SIZE = 40960
+)

@@ -52,6 +52,8 @@ type Peer struct {
     PeerNodes []*network.ServerIdentity
 }
 
+type Proxy Peer
+
 // PeerReply returns the operation status
 type PeerReply struct {
     List []*network.ServerIdentity

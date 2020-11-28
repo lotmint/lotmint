@@ -5,7 +5,7 @@ import (
 )
 
 func TestNewGenesisBlock(t *testing.T) {
-    hash, err := genesisBlock.CalculateHash()
+    hash, err := GetGenesisBlock().CalculateHash()
     if err != nil {
         t.Errorf(err.Error())
     } else {

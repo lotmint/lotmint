@@ -4,6 +4,8 @@ import (
     "crypto/sha256"
     "encoding/binary"
     "errors"
+
+	"go.dedis.ch/onet/v3/network"
 )
 
 type BlockHeader struct {
@@ -26,7 +28,7 @@ type BlockHeader struct {
     PublicKey string
 
     // IP Addresses
-    Addresses []Address
+    Addresses []*network.ServerIdentity
 
     // Data is any data to be stored in that Block.
     Data []byte
@@ -39,9 +41,9 @@ func (bh *BlockHeader) Copy() *BlockHeader {
     copy(merkleRoot, bh.MerkleRoot)
     data := make([]byte, len(bh.Data))
     copy(data, bh.Data)
-    var addresses []Address
+    var addresses []*network.ServerIdentity
     for _, addr := range bh.Addresses {
-        addresses = append(addresses, Address{addr.Host,addr.Port,addr.Key})
+        addresses = append(addresses, addr) // Copy
     }
     return &BlockHeader{
         Index:		bh.Index,
@@ -62,7 +64,7 @@ type Block struct {
     Hash []byte
     // Payload is additional data that needs to be hashed by the application
     // itself into BlockHeader.Data.
-    Payload []byte `protobuf:"opt"`
+    Payload []byte
     Transactions []*Transaction
     OrderBlocks []*Block
 }
@@ -71,7 +73,7 @@ func NewBlock() *Block {
     return &Block{
         BlockHeader: &BlockHeader{
             Data: make([]byte, 0),
-	},
+	    },
     }
 }
 
