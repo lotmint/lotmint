@@ -3,11 +3,7 @@ package blockchain
 import (
     "crypto/sha256"
     "encoding/binary"
-    "encoding/hex"
     "errors"
-    "fmt"
-    "strings"
-    "time"
 
 	"go.dedis.ch/onet/v3/network"
 )
@@ -66,6 +62,9 @@ func (bh *BlockHeader) Copy() *BlockHeader {
 type Block struct {
     *BlockHeader
     Hash []byte
+    // Payload is additional data that needs to be hashed by the application
+    // itself into BlockHeader.Data.
+    Payload []byte `protobuf:"opt"`
     Transactions []*Transaction
     OrderBlocks []*Block
 }
@@ -75,9 +74,7 @@ func NewBlock() *Block {
         BlockHeader: &BlockHeader{
             Data: make([]byte, 0),
 	    },
-	    Hash: make([]byte, 0),
-        Transactions: make([]*Transaction, 0),
-        OrderBlocks: make([]*Block, 0),
+	    Payload: make([]byte, 0),
     }
 }
 
@@ -117,32 +114,14 @@ func (b *Block) Copy() *Block {
     block := &Block{
         BlockHeader:	b.BlockHeader.Copy(),
 	    Hash:           make([]byte, len(b.Hash)),
+	    Payload:	    make([]byte, len(b.Payload)),
 	    Transactions:	make([]*Transaction, len(b.Transactions)),
         OrderBlocks:    make([]*Block, len(b.OrderBlocks)),
     }
     copy(block.Hash, b.Hash)
-    for _, tx := range b.Transactions {
-        block.Transactions = append(block.Transactions, tx) // tx.Copy()
-    }
+    copy(block.Payload, b.Payload)
     for _, ob := range b.OrderBlocks {
         block.OrderBlocks = append(block.OrderBlocks, ob.Copy())
     }
     return block
-}
-
-func (b *Block) String() string {
-    var builder strings.Builder
-    builder.WriteString(fmt.Sprintf("Block %d", b.Index))
-    builder.WriteString(fmt.Sprintf("\n\tHeight: %d", b.Index))
-    builder.WriteString(fmt.Sprintf("\n\tVersion: %d", b.Version))
-    builder.WriteString(fmt.Sprintf("\n\tBits: 0x%x", b.Bits))
-    builder.WriteString(fmt.Sprintf("\n\tNonce: %d", b.Nonce))
-    builder.WriteString(fmt.Sprintf("\n\tTimestamp: %s", time.Unix(0, int64(b.Timestamp)).Format("2006-01-02 15:04:05")))
-    builder.WriteString(fmt.Sprintf("\n\tPrevBlock: %s", hex.EncodeToString(b.PrevBlock)))
-    builder.WriteString(fmt.Sprintf("\n\tMerkleRoot: %s", hex.EncodeToString(b.MerkleRoot)))
-    builder.WriteString(fmt.Sprintf("\n\tPublicKey: %s", b.PublicKey))
-    builder.WriteString(fmt.Sprintf("\n\tAddresses: %v", b.Addresses))
-    builder.WriteString(fmt.Sprintf("\n\tData: %s", hex.EncodeToString(b.Data)))
-    builder.WriteString(fmt.Sprintf("\n\tHash: %s", hex.EncodeToString(b.Hash)))
-    return builder.String()
 }

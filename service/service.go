@@ -15,7 +15,7 @@ import (
 	"lotmint/mining"
 	"lotmint/protocol"
 
-
+    "go.dedis.ch/cothority/v3"
     "go.dedis.ch/kyber/v3/pairing"
 	"go.dedis.ch/kyber/v3/util/random"
 	"go.dedis.ch/onet/v3"
@@ -276,10 +276,10 @@ func (s *Service) broadcastBlockToBFT(block *bc.Block) {
     }
     tmpBlock := latestBlock.Copy()
 
-    var memberMap map[string]bool
+    memberMap := make(map[string]bool)
     for i := 0; i < COSI_MEMBERS; i++ {
         memberMap[tmpBlock.PublicKey] = true
-        if tmpBlock.PrevBlock == nil {
+        if len(tmpBlock.PrevBlock) == 0 {
             break
         }
         tmpBlock := s.db.GetByID(BlockID(tmpBlock.PrevBlock))
@@ -325,6 +325,7 @@ func (s *Service) BroadcastBlockToProxies(block *bc.Block) {
             conn.Close()
             continue
         }
+        log.Lvlf3("Send block: %+v", block)
         buf, err := protobuf.Encode(block)
         if err != nil {
             log.Error(err)
@@ -381,7 +382,7 @@ func (s *Service) startTimer(block *bc.Block) {
     case <-time.After(60 * time.Second):
         s.timerRunning = false
     }
-    log.Lvlf3("timer finished (%v)", time.Now().Format("2020-12-30 00:00:00"))
+    log.Lvlf3("timer finished (%s)", time.Now().Format("Mon Jan 2 15:04:05 -0700 MST 2006"))
 
     // Notify stop local mining
     s.stopMiner()
@@ -404,12 +405,12 @@ func (s *Service) handleSignatureRequest(env *network.Envelope) error {
         return xerrors.New("Blockchain not actived")
     }
 
-    var blockMap map[string]*bc.Block
+    blockMap := make(map[string]*bc.Block)
     for _, ob := range req.Block.OrderBlocks {
         blockMap[ob.PublicKey] = ob
     }
 
-    var omitBlocks map[string]*bc.Block
+    omitBlocks := make(map[string]*bc.Block)
     blocks := s.blockBuffer.Choice()
     for _, block := range blocks {
         if b, ok := blockMap[block.PublicKey]; !ok {
@@ -448,7 +449,7 @@ func (s *Service) handleProxyRequest(env *network.Envelope) error {
 
     tmpBlock := latestBlock.Copy()
 
-    var memberMap map[string]bool
+    memberMap := make(map[string]bool)
     for i := 0; i < COSI_MEMBERS; i++ {
         memberMap[tmpBlock.PublicKey] = true
         if tmpBlock.PrevBlock == nil {
@@ -482,7 +483,7 @@ func (s *Service) handleProxyRequest(env *network.Envelope) error {
         log.Error(errs)
     }
 
-    var responses map[string]map[string]*bc.Block
+    responses := make(map[string]map[string]*bc.Block)
     done := len(errs)
     for done < success {
         select {
@@ -496,8 +497,8 @@ func (s *Service) handleProxyRequest(env *network.Envelope) error {
     }
 
     // TODO: Count followers blocks and fill into OrderBlocks
-    var blockCountMap map[string]int
-    var blockMap map[string]*bc.Block
+    blockCountMap := make(map[string]int)
+    blockMap := make(map[string]*bc.Block)
     for _, resp := range responses {
         for key, res := range resp {
             if _, ok := blockCountMap[key]; !ok {
@@ -557,7 +558,7 @@ func (s *Service) GetBlockByIndex(req *lotmint.BlockByIndexRequest) (*bc.Block, 
     if block.Index > req.Value {
         var err error
         block, err = s.db.GetBlockByIndex(req.Value)
-	if err != nil {
+	    if err != nil {
             block = s.db.GetLatest()
             for block.Index >= 0 && block.Index != req.Value {
                 block = s.db.GetByID(block.Hash)
@@ -565,10 +566,20 @@ func (s *Service) GetBlockByIndex(req *lotmint.BlockByIndexRequest) (*bc.Block, 
                     return nil, errors.New("No such block")
                 }
             }
-	}
+	    }
     }
     return block, nil
 
+}
+
+func (s *Service) GetLatestBlock(req *lotmint.BlockLatestRequest) (*bc.Block, error) {
+    s.createBlockChainMutex.Lock()
+    defer s.createBlockChainMutex.Unlock()
+    latest := s.db.GetLatest()
+    if latest == nil {
+        return nil, xerrors.New("Blockchain not actived")
+    }
+    return latest, nil
 }
 
 // NewProtocol is called on all nodes of a Tree (except the root, since it is
@@ -680,7 +691,7 @@ func (s *Service) publicKey() string {
 func (s *Service) isLeader() bool {
     latest := s.db.GetLatest()
     if latest != nil {
-        // log.Lvlf3("BlockchanKey: %s, PublicKey: %s", latest.PublicKey, s.publicKey())
+        log.Lvlf3("BlockchanKey: %s, PublicKey: %s", latest.PublicKey, s.publicKey())
         return latest.PublicKey == s.publicKey()
     }
     return false
@@ -783,10 +794,11 @@ func (s *Service) runProposal() {
     blocks := s.blockBuffer.Choice()
     if len(blocks) == 0 {
         // TODO: Retransmission Message
-        log.Warn("No candidate blocks: reset")
+        log.Warn("No candidate blocks: reset again")
+        go s.startTimer(latest)
         return
     }
-    var blockKeyMap map[string]bool
+    blockKeyMap := make(map[string]bool)
     for _, b := range blocks {
         blockKeyMap[b.PublicKey] = true
     }
@@ -850,6 +862,9 @@ func (s *Service) runProposal() {
     s.db.Store(proposalBlock)
     s.db.UpdateLatest(proposalBlock)
     s.BroadcastBlock(proposalBlock, RefererBlock)
+    log.Info("Leader finished to refer block")
+    // Start local mining
+    go s.startTimer(proposalBlock)
 }
 
 func (s *Service) mainLoop() {
@@ -874,7 +889,7 @@ func (s *Service) handleHandshakeMessage(env *network.Envelope) error {
             return nil
         }
     } else {
-	if req.GenesisID != nil && bytes.Compare(req.GenesisID, genesisID) != 0 {
+	    if req.GenesisID != nil && bytes.Compare(req.GenesisID, genesisID) != 0 {
             return xerrors.New("no same block chain")
         }
         s.db.latestMutex.Lock()
@@ -1074,19 +1089,20 @@ func (s *Service) handleDownloadBlockResponse(env *network.Envelope) error {
 func (s *Service) handleUDPRequest() {
     for {
         buf := make([]byte, UDP_BUFFER_SIZE)
-        l, cAddr, err := s.udpConn.ReadFromUDP(buf)
+        length, cAddr, err := s.udpConn.ReadFromUDP(buf)
         if err != nil {
             log.Error(err)
             continue
         }
-        log.Infof("Receive data[%d] from %s", l, cAddr)
+        log.Infof("Receive [%d] from %s", length, cAddr)
         block := bc.NewBlock()
-        //err = protobuf.DecodeWithConstructors(buf, block, network.DefaultConstructors(suite))
-        err = protobuf.DecodeWithConstructors(buf, block, nil)
+        err = protobuf.DecodeWithConstructors(buf[:length], block, network.DefaultConstructors(cothority.Suite))
+        //err = protobuf.DecodeWithConstructors(buf, block, nil)
 		if err != nil {
             log.Error(err)
             continue
 		}
+        log.Infof("Receive block: %+v", block)
 
         /*s.udpConn.WriteToUDP([]byte(), cAddr)
         if err != nil {
@@ -1157,6 +1173,9 @@ func newService(c *onet.Context) (onet.Service, error) {
     if err := s.RegisterHandlers(s.Peer, s.Proxy, s.CreateGenesisBlock, s.GetBlockByID, s.GetBlockByIndex); err != nil {
         return nil, errors.New("Couldn't register handlers")
     }
+    if err := s.RegisterHandler(s.GetLatestBlock); err != nil {
+        return nil, errors.New("Couldn't register handlers")
+    }
     // s.ServiceProcessor.RegisterStatusReporter("BlockDB", s.db)
     s.RegisterProcessorFunc(handshakeMessageId, s.handleHandshakeMessage)
     s.RegisterProcessorFunc(serviceMessageId, s.handleMessageReq)
@@ -1180,7 +1199,9 @@ func newService(c *onet.Context) (onet.Service, error) {
 }
 
 func (s *Service) startMiner(block *bc.Block) {
-    templateBlock := block.Copy()
+    templateBlock := bc.NewBlock()
+    templateBlock.BlockHeader = block.BlockHeader.Copy()
+    copy(templateBlock.PrevBlock, block.Hash)
     var addrKey []string
     for key, _ := range s.proxyStorage.peerNodeMap {
         addrKey = append(addrKey, key)

@@ -34,6 +34,7 @@ func (m *Miner) Start(block *bc.Block) {
     }
 
     m.block = block
+    m.quit = make(chan struct{})
     go m.miningWorker()
     m.started = true
     log.Infof("Miner started")
@@ -42,31 +43,34 @@ func (m *Miner) Start(block *bc.Block) {
 func (m *Miner) miningWorker() {
     quit := make(chan struct{})
     go m.generateBlocks(quit)
-    <-quit
+outer:
+    for {
+        select {
+        case <-m.quit:
+            close(quit)
+            break outer
+        }
+    }
     log.Infof("Miner worker finished")
 }
 
 func (m *Miner) generateBlocks(quit chan struct{}) {
     log.Info("Starting generate blocks worker")
-    newQuit := make(chan struct{}, 1)
-out:
+	newBlock := m.block
+outer:
     for {
-        // Quit when the miner is stopped.
         select {
-        case <-newQuit:
-	        break out
+        case <-quit:
+	        break outer
         default:
             // Non-blocking select to fall through
         }
-	    newBlock := m.block
-	    if m.solveBlock(newBlock, newQuit) {
+	    if m.solveBlock(newBlock, quit) {
             m.callback(newBlock)
-            log.Info("Generate blocks worker done")
-	        break out
+	        break outer
         }
     }
-    //m.quit <- struct{}{}
-    close(quit)
+    log.Info("Generate blocks worker done")
 }
 
 func (m *Miner) solveBlock(block *bc.Block, quit chan struct{}) bool {
@@ -74,15 +78,14 @@ func (m *Miner) solveBlock(block *bc.Block, quit chan struct{}) bool {
 	header.Index = header.Index + 1
 	copy(header.PrevBlock, block.Hash)
     targetDifficulty := bc.CompactToBig(header.Bits)
-    log.Lvlf3("Bits d:%v convert to difficulty bin:%064x", header.Bits, targetDifficulty)
+    log.Lvlf3("Bits 0x%x convert to difficulty 0x%064x", header.Bits, targetDifficulty)
     // Search through the entire nonce range for a solution while
     // periodically checking for early quit and stale block
     // conditions along with updates to the speed monitor.
     for i := uint32(0); i <= maxNonce; i++ {
         select {
-        case <-m.quit:
+        case <-quit:
             log.Lvl3("solveBlock quit")
-            close(quit)
             return false
 	    default:
             // Non-blocking select to fall through
@@ -116,13 +119,12 @@ func (m *Miner) Stop() {
     }
 
     log.Infof("Miner stopped")
-    m.quit <- struct{}{}
+    close(m.quit)
     m.started = false
 }
 
 func New(callback Listener) *Miner {
     return &Miner{
         callback: callback,
-        quit: make(chan struct{}),
     }
 }

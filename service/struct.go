@@ -270,8 +270,10 @@ func (bb *blockBuffer) Append(block *bc.Block) {
 
 func (bb *blockBuffer) Choice() []*bc.Block {
     bb.Lock()
-	defer bb.Unlock()
-
+    defer func() {
+	    bb.blocks = bb.blocks[:0]
+	    bb.Unlock()
+    }()
     if len(bb.blocks) > 0 {
         selectedIndex := rand.Intn(len(bb.blocks))
         bb.blocks[0], bb.blocks[selectedIndex] = bb.blocks[selectedIndex], bb.blocks[0]

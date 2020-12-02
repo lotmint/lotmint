@@ -101,3 +101,14 @@ func (c *Client) GetBlockByIndex(r *onet.Roster, blockIndex int) (*bc.Block, err
     }
     return reply, nil
 }
+
+func (c *Client) GetLatestBlock(r *onet.Roster) (*bc.Block, error) {
+    dst := r.RandomServerIdentity()
+    log.Lvl4("Sending message to", dst)
+    reply := &bc.Block{}
+    err := c.SendProtobuf(dst, &BlockLatestRequest{}, reply)
+    if err != nil {
+        return nil, err
+    }
+    return reply, nil
+}

@@ -78,7 +78,7 @@ var cmds = cli.Commands{
     },
     {
         Name:	"block",
-	    Usage:	"Read a block given by an index or hash id",
+	    Usage:	"Get latest block or a block given by an index or hash id",
 	    Aliases:	[]string{"b"},
 	    Action: showBlock,
 	    Flags: []cli.Flag{

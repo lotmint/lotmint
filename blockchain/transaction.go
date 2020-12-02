@@ -9,5 +9,5 @@ type Transaction struct {
     Timestamp uint64
     Nonce uint64
     // Store any data.
-    Payload []byte
+    Data []byte `protobuf:"bytes,opt"`
 }

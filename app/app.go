@@ -62,7 +62,7 @@ func main() {
     }
     cliApp.Before = func(c *cli.Context) error {
         log.SetDebugVisible(c.Int("debug"))
-	return nil
+	    return nil
     }
     log.ErrFatal(cliApp.Run(os.Args))
 }
@@ -298,14 +298,13 @@ func getIDPointer(s string) (*bc.BlockID, error) {
 }
 
 func showBlock(c *cli.Context) error {
-    log.Info("Query block")
     blockID, err := getIDPointer(c.String("hash"))
     if err != nil {
         return xerrors.Errorf("couldn't get hash: %+v", err)
     }
     blockIndex := c.Int("index")
-    if blockIndex < 0 && blockID == nil {
-        return xerrors.New("need either --index or --hash")
+    if blockIndex >= 0 && blockID != nil {
+        return xerrors.New("--index or --hash don't same time")
     }
 
     group := parseConfig(c)
@@ -315,13 +314,16 @@ func showBlock(c *cli.Context) error {
     var resperr error
     if blockID != nil {
         resp, resperr = client.GetBlockByID(group.Roster, *blockID)
-    } else {
+    } else if blockIndex >= 0 {
         resp, resperr = client.GetBlockByIndex(group.Roster, blockIndex)
+    } else {
+        resp, resperr = client.GetLatestBlock(group.Roster)
     }
     if resperr != nil {
-        return xerrors.Errorf("couldn't get block: %v", resperr.Error())
+        return xerrors.Errorf("couldn't get block: %+v", resperr.Error())
     }
-    log.Infof("\tIndex=%d\n\tHash=%#x", resp.Index, resp.Hash)
+    //log.Infof("\tIndex=%d\n\tHash=%#x", resp.Index, resp.Hash)
+    log.Infof("%s", resp.String())
     return nil
 }
 

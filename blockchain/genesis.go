@@ -53,7 +53,6 @@ func GetGenesisBlock() *Block{
                 Data:		make([]byte, 0),
             },
             Hash:		genesisHash,
-            Payload:		make([]byte, 0),
             Transactions:	make([]*Transaction, 0),
     }
     return genesisBlock

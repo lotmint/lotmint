@@ -18,7 +18,7 @@ func init() {
         Clock{}, ClockReply{},
     )
     network.RegisterMessages(Peer{}, PeerReply{})
-    network.RegisterMessages(GenesisBlockRequest{}, BlockByIDRequest{}, BlockByIndexRequest{})
+    network.RegisterMessages(GenesisBlockRequest{}, BlockByIDRequest{}, BlockByIndexRequest{}, BlockLatestRequest{})
 }
 
 const (
@@ -69,3 +69,5 @@ type BlockByIDRequest struct {
 type BlockByIndexRequest struct {
     Value int
 }
+
+type BlockLatestRequest struct {}
