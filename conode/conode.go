@@ -1,4 +1,4 @@
-// Conode is the main binary for running a LotMint(Cothority) server.
+// Conode is the main binary for running a LotMint server.
 // A conode can participate in various distributed protocols using the
 // *onet* library as a network and overlay library and the *kyber*
 // library for all cryptographic primitives.

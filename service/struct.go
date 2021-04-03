@@ -1,7 +1,8 @@
 package service
 
 import (
-    "math/rand"
+	//"bytes"
+	//"math/rand"
     "sync"
 
     bc "lotmint/blockchain"
@@ -38,34 +39,36 @@ func (p *txPool) add(key string, tx bc.Transaction) {
 }
 
 // Announce is used to pass a message to all children.
-type ServiceMessage struct {
+type PingMessage struct {
     Message string
 }
 
+type TunnelMessage PingMessage
+
 type BlockMessage struct {
     Type int // 0:CandidateBlock,1:RefererBlock,2:TxBlock
-    Block *bc.Block
+    Block interface{}
 }
 
 type HandshakeMessage struct {
     GenesisID BlockID
-    LatestBlock *bc.Block
+    LatestBlock *bc.NewLeaderHelloBlock
     Answer  bool
 }
 
 type DownloadBlockRequest struct {
     GenesisID BlockID
-    Start int
-    Size int
+    Start uint64
+    Size uint64
 }
 
 type DownloadBlockResponse struct {
-    Blocks []*bc.Block
+    Blocks []*bc.NewLeaderHelloBlock
     GenesisID BlockID
 }
 
 type SignatureRequest struct {
-    Block *bc.Block
+	Blocks []*bc.Block
 }
 
 // SignatureResponse is what the Cosi service will reply to clients.
@@ -75,7 +78,7 @@ type SignatureResponse struct {
 }
 
 type ProxyRequest struct {
-    Block *bc.Block
+	Blocks []*bc.Block
 }
 
 type ProxyResponse struct {
@@ -84,11 +87,11 @@ type ProxyResponse struct {
 }
 
 type AddressMessage struct {
-    Address *network.ServerIdentity
+    Addresses []string
 }
 
 type RemoteServerIndex struct {
-    Index int
+    Index uint64
     ServerIdentity *network.ServerIdentity
 }
 
@@ -97,7 +100,7 @@ type BlockDB struct {
     bucketName []byte
     latestBlockID BlockID
     latestMutex sync.Mutex
-    blockIndexMap map[int]BlockID
+    blockIndexMap map[uint64]BlockID
 }
 
 // NewBlockDB returns an initialized BlockDB structure.
@@ -105,12 +108,12 @@ func NewBlockDB(db *bbolt.DB, bn[]byte) *BlockDB {
 	return &BlockDB{
 		DB: db,
 		bucketName: bn,
-		blockIndexMap: make(map[int]BlockID),
+		blockIndexMap: make(map[uint64]BlockID),
 	}
 }
 
 // storeToTx stores the block into the database.
-func (db *BlockDB) storeToTx(tx *bbolt.Tx, block *bc.Block) (BlockID, error) {
+func (db *BlockDB) storeToTx(tx *bbolt.Tx, block *bc.NewLeaderHelloBlock) (BlockID, error) {
     log.Lvlf2("Storing block %d / %x", block.Index, block.Hash)
 	val, err := network.Marshal(block)
 	if err != nil {
@@ -121,7 +124,7 @@ func (db *BlockDB) storeToTx(tx *bbolt.Tx, block *bc.Block) (BlockID, error) {
 
 // getFromTx returns the skipblock identified by sbID.
 // nil is returned if the key does not exist.
-func (db *BlockDB) getFromTx(tx *bbolt.Tx, sbID BlockID) (*bc.Block, error) {
+func (db *BlockDB) getFromTx(tx *bbolt.Tx, sbID BlockID) (*bc.NewLeaderHelloBlock, error) {
 	if sbID == nil {
 		return nil, xerrors.New("cannot look up block with ID == nil")
 	}
@@ -140,11 +143,11 @@ func (db *BlockDB) getFromTx(tx *bbolt.Tx, sbID BlockID) (*bc.Block, error) {
 		return nil, err
 	}
 
-	return sbMsg.(*bc.Block).Copy(), nil
+	return sbMsg.(*bc.NewLeaderHelloBlock).Copy(), nil
 }
 
 // Stores the set of blocks in the boltdb
-func (db *BlockDB) StoreBlocks(blocks []*bc.Block) ([]BlockID, error) {
+func (db *BlockDB) StoreBlocks(blocks []*bc.NewLeaderHelloBlock) ([]BlockID, error) {
     var result []BlockID
     err := db.Update(func(tx *bbolt.Tx) error {
         for _, block := range blocks {
@@ -160,8 +163,8 @@ func (db *BlockDB) StoreBlocks(blocks []*bc.Block) ([]BlockID, error) {
 }
 
 // Stores the given Block into db
-func (db *BlockDB) Store(block *bc.Block) BlockID {
-	ids, err := db.StoreBlocks([]*bc.Block{block})
+func (db *BlockDB) Store(block *bc.NewLeaderHelloBlock) BlockID {
+	ids, err := db.StoreBlocks([]*bc.NewLeaderHelloBlock{block})
 	if err != nil {
 		log.Error(err)
 	}
@@ -183,14 +186,14 @@ func (db *BlockDB) GetGenesisID() (BlockID) {
 
 
 // GetLatest searches for the latest available block.
-func (db *BlockDB) GetLatest() (*bc.Block) {
+func (db *BlockDB) GetLatest() (*bc.NewLeaderHelloBlock) {
     db.latestMutex.Lock()
     latest := db.GetByID(db.latestBlockID)
     db.latestMutex.Unlock()
     return latest
 }
 
-func (db *BlockDB) UpdateLatest(block *bc.Block) {
+func (db *BlockDB) UpdateLatest(block *bc.NewLeaderHelloBlock) {
     db.latestMutex.Lock()
     db.latestBlockID = BlockID(block.Hash)
 	db.blockIndexMap[block.Index] = BlockID(block.Hash)
@@ -198,8 +201,8 @@ func (db *BlockDB) UpdateLatest(block *bc.Block) {
 }
 
 // GetByID returns a new copy of the skip-block or nil if it doesn't exist
-func (db *BlockDB) GetByID(bID BlockID) *bc.Block {
-    var result *bc.Block
+func (db *BlockDB) GetByID(bID BlockID) *bc.NewLeaderHelloBlock {
+    var result *bc.NewLeaderHelloBlock
     if bID == nil {
         return nil
     }
@@ -230,7 +233,7 @@ func (db *BlockDB) BuildIndex() error {
 	        if err != nil {
                     return err
 	        }
-	        block := msg.(*bc.Block).Copy()
+	        block := msg.(*bc.NewLeaderHelloBlock).Copy()
 	        log.Lvlf3("Loading block %d / %x", block.Index, block.Hash)
 	        //db.blockIndexMap[block.Index] = BlockID(k)
             db.UpdateLatest(block)
@@ -239,7 +242,7 @@ func (db *BlockDB) BuildIndex() error {
     })
 }
 
-func (db *BlockDB) GetBlockByIndex(blockIndex int) (*bc.Block, error) {
+func (db *BlockDB) GetBlockByIndex(blockIndex uint64) (*bc.NewLeaderHelloBlock, error) {
     blockID, ok := db.blockIndexMap[blockIndex]
     if !ok {
         return nil, xerrors.New("no block found")
@@ -254,27 +257,75 @@ func (db *BlockDB) GetBlockByIndex(blockIndex int) (*bc.Block, error) {
 // Blocks are stored per skipchain to prevent the cache to grow and it
 // is cleared after a new block is added
 type blockBuffer struct {
-    blocks []*bc.Block
+    blockMap map[string]*bc.Block
 	sync.Mutex
 }
 
 func newBlockBuffer() *blockBuffer {
-    return &blockBuffer{}
+    return &blockBuffer{
+    	blockMap: make(map[string]*bc.Block),
+	}
 }
 
-func (bb *blockBuffer) Append(block *bc.Block) {
+func (bb *blockBuffer) List() []*bc.Block {
+	var blocks []*bc.Block
+	for _, block := range bb.blockMap {
+		blocks = append(blocks, block)
+	}
+	return blocks
+}
+
+func (bb *blockBuffer) Put(block *bc.Block) {
     bb.Lock()
     defer bb.Unlock()
-    bb.blocks = append(bb.blocks, block.Copy())
+    //bb.blocks = append(bb.blocks, block.Copy())
+    bb.blockMap[string(block.Hash)] = block
 }
 
-func (bb *blockBuffer) Choice() []*bc.Block {
+func (bb *blockBuffer) Len() int {
+	return len(bb.blockMap)
+}
+
+func (bb *blockBuffer) Set(block *bc.Block) {
+	bb.Lock()
+	defer bb.Unlock()
+	if _, ok := bb.blockMap[string(block.Hash)]; !ok {
+		bb.blockMap[string(block.Hash)] = block
+	} else {
+		bb.blockMap[string(block.Hash)].Sign(string(block.Hash))
+	}
+}
+
+func (bb *blockBuffer) HalfMore(memberLen uint64) []*bc.Block {
+	var blocks []*bc.Block
+	for _, block := range bb.blockMap {
+		if len(block.Collections) > int(memberLen) {
+			blocks = append(blocks, block)
+		}
+	}
+	return blocks
+}
+
+func (bb *blockBuffer) in(hash BlockID) bool {
+	bb.Lock()
+	defer bb.Unlock()
+	_, ok := bb.blockMap[string(hash)]
+	return ok
+	/*for _, b := range bb.blocks {
+		if bytes.Compare(b.Hash, hash) == 0 {
+			return true
+		}
+	}
+	return false*/
+}
+
+/*func (bb *blockBuffer) Choice() []*bc.Block {
     bb.Lock()
     defer func() {
 	    bb.blocks = bb.blocks[:0]
 	    bb.Unlock()
     }()
-    if len(bb.blocks) > 0 {
+    if bb.Len() > 0 {
         selectedIndex := rand.Intn(len(bb.blocks))
         bb.blocks[0], bb.blocks[selectedIndex] = bb.blocks[selectedIndex], bb.blocks[0]
     }
@@ -291,4 +342,4 @@ func (bb *blockBuffer) ChoiceOne() *bc.Block {
         return nil
     }
     return bb.blocks[rand.Intn(len(bb.blocks))]
-}
+}*/

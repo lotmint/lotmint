@@ -15,6 +15,17 @@ type BlockID []byte
 // typically represents the double sha256 of data.
 type Hash [HashSize]byte
 
+type Collection struct {
+    PublicKey string
+    Signature string
+}
+
+func newCollection(key string) *Collection {
+    return &Collection{
+        PublicKey: key,
+    }
+}
+
 func init() {
     network.RegisterMessage(&BlockHeader{})
     network.RegisterMessage(&Block{})

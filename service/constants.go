@@ -1,9 +1,9 @@
 package service
 
 const (
-    DEFAULT_DELTA = 10
+    DEFAULT_DS = 10
     PHI = 10
-    EPOCH = 10
+    DELTA = 10
     MAX_BLOCK_PERONCE = 1 // N blocks for every request
     COSI_MEMBERS = 11 // Members participating in the cosi
 )
@@ -11,8 +11,9 @@ const (
 const (
     CandidateBlock = 0
     RefererBlock = 1
-    ProposalBlock = 2
-    TxBlock = 3
+    NewLeaderHelloBlock = 2
+    ProposalBlock = 3
+    TxBlock = 4
 )
 
 const (

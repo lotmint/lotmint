@@ -173,18 +173,19 @@ func addProxy(c *cli.Context) error {
 	    return xerrors.New("please give the following arguments: " +
 	        "host[:port] [host[:port]]...")
     }
-    var peers []*network.ServerIdentity
+    var peers []string
     for i := 0; i < c.NArg(); i++ {
 	    peerURL := c.Args().Get(i)
         if strings.Index(peerURL, "://") < 0 {
-            peerURL = "tls://" + peerURL;
+            peerURL = "tls://" + peerURL
         }
-	    si, err := utils.ConvertPeerURL(peerURL)
+	    /*si, err := utils.ConvertPeerURL(peerURL)
 	    if err == nil {
             peers = append(peers, si)
         } else {
             log.Warn(err.Error())
-        }
+        }*/
+	    peers = append(peers, peerURL)
     }
     log.Info("Add peers:", peers)
     group := parseConfig(c)
@@ -206,13 +207,17 @@ func delProxy(c *cli.Context) error {
 	    return xerrors.New("please give the following arguments: " +
 	        "host[:port] [host[:port]]...")
     }
-    var peers []*network.ServerIdentity
+    var peers []*string
     for i := 0; i < c.NArg(); i++ {
 	    peerURL := c.Args().Get(i)
-	    si, err := utils.ConvertPeerURL(peerURL)
+        if strings.Index(peerURL, "://") < 0 {
+            peerURL = "tls://" + peerURL
+        }
+	    /*si, err := utils.ConvertPeerURL(peerURL)
 	    if err == nil {
                 peers = append(peers, si)
-        }
+        }*/
+        peers = append(peers, peerURL)
     }
     log.Info("Remove peers: ", peers)
     group := parseConfig(c)
@@ -230,11 +235,11 @@ func delProxy(c *cli.Context) error {
 
 // Show peer status
 func showProxy(c *cli.Context) error {
-    var peers []*network.ServerIdentity
-    for i := 0; i < c.NArg(); i++ {
-	peerURL := c.Args().Get(i)
-	si, err := utils.ConvertPeerURL(peerURL)
-	if err == nil {
+    var peers []*string
+    /*for i := 0; i < c.NArg(); i++ {
+	    peerURL := c.Args().Get(i)
+	    si, err := utils.ConvertPeerURL(peerURL)
+	    if err == nil {
             peers = append(peers, si)
         }
     }
@@ -242,7 +247,7 @@ func showProxy(c *cli.Context) error {
         log.Info("Show peers: ", peers)
     } else {
         log.Info("Show all peers")
-    }
+    }*/
     group := parseConfig(c)
     client := lotmint.NewClient()
     resp, err := client.Peer(group.Roster, &lotmint.Proxy{

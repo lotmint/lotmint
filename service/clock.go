@@ -3,6 +3,7 @@ package service
 import (
     "container/list"
     "sync"
+
     "golang.org/x/xerrors"
 )
 
@@ -15,7 +16,7 @@ type PrivateClock struct {
 func newPrivateClock(size int) *PrivateClock{
     return &PrivateClock{
         List: list.New(),
-	Size: size,
+	    Size: size,
     }
 }
 
@@ -50,8 +51,8 @@ func (pc *PrivateClock) Clock() uint64{
 // \Delta_N(TB,Evt)=GC_Cycle(TB)/PrivateCycles_N(TB)(PrivateClock_N(Evt)-PrivateClock_N(TB))
 func (s *Service) calcDelta() (uint64, error) {
     latestBlock := s.db.GetLatest()
-    preIndex := latestBlock.Index - s.privateClock.Size + 1 // begin 0
-    div := s.privateClock.Size
+    preIndex := latestBlock.Index - uint64(s.privateClock.Size)
+    div := uint64(s.privateClock.Size)
     if div == 0 {
         return 0, xerrors.New("size could not be zero")
     }
@@ -63,11 +64,11 @@ func (s *Service) calcDelta() (uint64, error) {
     if err != nil {
         return 0, err
     }
-    globalClock := (latestBlock.Timestamp - block.Timestamp) / uint64(div)
+    globalClock := (latestBlock.Timestamp - block.Timestamp) / div
     privateClock := s.privateClock.Clock()
     if privateClock == 0 {
         return 0, xerrors.New("private clock could not be zero")
     }
-    return globalClock / privateClock * (getCurrentTimestamp() - s.preTimestamp), nil
+    return globalClock / privateClock, nil
 }
 

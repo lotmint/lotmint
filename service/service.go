@@ -4,7 +4,7 @@ package service
 import (
 	"bytes"
 	"errors"
-	"math/rand"
+    "math/rand"
     "net"
 	// "fmt"
 	"sync"
@@ -14,14 +14,15 @@ import (
     bc "lotmint/blockchain"
 	"lotmint/mining"
 	"lotmint/protocol"
+    "lotmint/utils"
 
-    "go.dedis.ch/cothority/v3"
+    //"go.dedis.ch/cothority/v3"
     "go.dedis.ch/kyber/v3/pairing"
 	"go.dedis.ch/kyber/v3/util/random"
 	"go.dedis.ch/onet/v3"
 	"go.dedis.ch/onet/v3/log"
 	"go.dedis.ch/onet/v3/network"
-	"go.dedis.ch/protobuf"
+	//"go.dedis.ch/protobuf"
     "golang.org/x/xerrors"
 )
 
@@ -29,7 +30,8 @@ var serviceID onet.ServiceID
 //var peers []string
 
 var (
-    serviceMessageId network.MessageTypeID
+    pingMessageId network.MessageTypeID
+    tunnelMessageId network.MessageTypeID
     handshakeMessageId network.MessageTypeID
     blockMessageId network.MessageTypeID
     blockDownloadRequestId network.MessageTypeID
@@ -50,7 +52,7 @@ func init() {
     serviceID, err = onet.RegisterNewService(lotmint.ServiceName, newService)
     log.ErrFatal(err)
     network.RegisterMessage(&storage{})
-    serviceMessageId = network.RegisterMessage(&ServiceMessage{})
+    pingMessageId = network.RegisterMessage(&PingMessage{})
     handshakeMessageId = network.RegisterMessage(&HandshakeMessage{})
     blockMessageId = network.RegisterMessage(&BlockMessage{})
     blockDownloadRequestId = network.RegisterMessage(&DownloadBlockRequest{})
@@ -95,6 +97,8 @@ type Service struct {
 
     proxyStorage *peerStorage
 
+    addressMap map[string]bool
+
     synChan chan RemoteServerIndex
 
     synDone bool
@@ -107,9 +111,11 @@ type Service struct {
 
     privateClock *PrivateClock
 
+    deForkBlock *bc.DeForkBlock
+
     preTimestamp uint64
 
-    delta uint64
+    ds uint64
 
     timerRunning bool
 
@@ -126,7 +132,7 @@ var storageID = []byte("main")
 
 var peerStorageID = []byte("peers")
 
-var proxyStorageID = []byte("proxies")
+var addressID = []byte("address")
 
 // storage is used to save our data.
 type storage struct {
@@ -214,16 +220,16 @@ func (s *Service) Peer(req *lotmint.Peer) (*lotmint.PeerReply, error) {
 }
 
 // Proxy Operation
-func (s *Service) Proxy(req *lotmint.Proxy) (*lotmint.PeerReply, error) {
+func (s *Service) Proxy(req *lotmint.Proxy) (*lotmint.ProxyReply, error) {
     s.proxyStorage.Lock()
     defer s.proxyStorage.Unlock()
-    var peers []*network.ServerIdentity
-    var resp = &lotmint.PeerReply{}
+    var peers []string
+    var resp = &lotmint.ProxyReply{}
     log.Lvl3("Proxy command:", req.Command)
     switch req.Command {
     case "add":
 	    for _, peerNode := range req.PeerNodes{
-            if peerNode.Public == nil {
+            /*if peerNode.Public == nil {
                 peerNode.Public = s.ServerIdentity().Public
             }
 	        if _, ok := s.proxyStorage.peerNodeMap[peerNode.String()]; !ok {
@@ -232,24 +238,32 @@ func (s *Service) Proxy(req *lotmint.Proxy) (*lotmint.PeerReply, error) {
                 go s.BroadcastAddressTx(&AddressMessage{
                     Address: peerNode,
                 })
-	        }
+	        }*/
+	        s.addressMap[peerNode] = true
 	    }
-        if len(peers) > 0 {
+	    if len(req.PeerNodes) > 0 {
+            go s.BroadcastAddressTx(&AddressMessage{
+                Addresses: req.PeerNodes,
+            })
         }
     case "del":
 	    for _, peerNode := range req.PeerNodes{
-	        if _, ok := s.proxyStorage.peerNodeMap[peerNode.String()]; ok {
+	        /*if _, ok := s.proxyStorage.peerNodeMap[peerNode.String()]; ok {
 	            delete(s.proxyStorage.peerNodeMap, peerNode.String())
-                peers = append(peers, peerNode)
-	        }
+                    peers = append(peers, peerNode)
+	        }*/
+		if _, ok := s.proxyStorage.peerNodeMap[peerNode]; ok {
+                    delete(s.addressMap, peerNode)
+                    peers = append(peers, peerNode)
+		}
 	    }
     case "show":
 	    if len(req.PeerNodes) > 0 {
 	        peers = req.PeerNodes
 	    } else {
-	        for _, val := range s.proxyStorage.peerNodeMap {
-                peers = append(peers, val)
-            }
+	        for key, _ := range s.proxyStorage.peerNodeMap {
+                    peers = append(peers, key)
+                }
 	    }
     default:
         return nil, xerrors.New("Command not supported")
@@ -259,7 +273,7 @@ func (s *Service) Proxy(req *lotmint.Proxy) (*lotmint.PeerReply, error) {
 }
 
 // Broadcast message
-func (s *Service) BroadcastBlock(block *bc.Block, type_ int) {
+func (s *Service) BroadcastBlock(block interface{}, type_ int) {
     for _, peer := range s.peerStorage.peerNodeMap {
         if err := s.SendRaw(peer, &BlockMessage{type_, block}); err != nil {
             log.Error(err)
@@ -268,75 +282,56 @@ func (s *Service) BroadcastBlock(block *bc.Block, type_ int) {
 }
 
 // Broadcast block to all BFT members
-func (s *Service) broadcastBlockToBFT(block *bc.Block) {
-    latestBlock := s.db.GetLatest()
-    if latestBlock == nil {
-        log.Error("Blockchain not actived")
-        return
-    }
-    tmpBlock := latestBlock.Copy()
-
-    memberMap := make(map[string]bool)
-    for i := 0; i < COSI_MEMBERS; i++ {
-        memberMap[tmpBlock.PublicKey] = true
-        if len(tmpBlock.PrevBlock) == 0 {
-            break
-        }
-        tmpBlock := s.db.GetByID(BlockID(tmpBlock.PrevBlock))
-        if tmpBlock == nil {
-            log.Error("Incomplete local blockchain")
-            break
-        }
-    }
-
-    for key, _ := range memberMap {
-        if key == s.publicKey() {
-            s.blockBuffer.Append(block)
-        } else if peer, ok := s.peerStorage.peerNodeMap[key]; ok {
-            if err := s.SendRaw(peer, &BlockMessage{CandidateBlock, block}); err != nil {
-                log.Error(err)
-            }
-        }
-    }
-
-    if len(memberMap) == 0 {
-        log.Error("BFT members is empty")
-    }
-}
-
-func (s *Service) BroadcastBlockToProxies(block *bc.Block) {
-    latest := s.db.GetLatest()
-    if latest == nil {
-        log.Errorf("Leader not found")
-        return
-    }
-    for _, addr := range latest.Addresses {
-        // Instead of udp protocol
-	    /*if peer, ok := s.proxyStorage.peerNodeMap[addr.String()]; ok {
-            if err := s.SendRaw(peer, &BlockMessage{ProxyCandidateBlock, block}); err != nil {
-                log.Error(err)
-            }
-        }*/
-        address := addr.Address.Host() + ":" + addr.Address.Port()
-        log.Lvlf3("Connecting %s", address)
-        conn, err := net.Dial(UDP, address)
-        if err != nil {
-            log.Error(err)
-            conn.Close()
-            continue
-        }
-        log.Lvlf3("Send block: %+v", block)
-        buf, err := protobuf.Encode(block)
-        if err != nil {
-            log.Error(err)
-            conn.Close()
-            continue
-        }
-        conn.Write(buf)
-        // conn.Read(buf)
-        conn.Close()
-    }
-}
+//func (s *Service) broadcastBlockToBFT(block *bc.Block) {
+//    memberMap := s.getLatestPublicKeyMap()
+//    for key, _ := range memberMap {
+//        if key == s.publicKey() {
+//            s.blockBuffer.Append(block)
+//        } else if peer, ok := s.peerStorage.peerNodeMap[key]; ok {
+//            if err := s.SendRaw(peer, &BlockMessage{CandidateBlock, block}); err != nil {
+//                log.Error(err)
+//            }
+//        }
+//    }
+//
+//    if len(memberMap) == 0 {
+//        log.Error("BFT members is empty")
+//    }
+//}
+//
+//func (s *Service) BroadcastBlockToProxies(block *bc.Block) {
+//    latest := s.db.GetLatest()
+//    if latest == nil {
+//        log.Errorf("Leader not found")
+//        return
+//    }
+//    for _, addr := range latest.Addresses {
+//        // Instead of udp protocol
+//	    /*if peer, ok := s.proxyStorage.peerNodeMap[addr.String()]; ok {
+//            if err := s.SendRaw(peer, &BlockMessage{ProxyCandidateBlock, block}); err != nil {
+//                log.Error(err)
+//            }
+//        }*/
+//        address := addr.Address.Host() + ":" + addr.Address.Port()
+//        log.Lvlf3("Connecting %s", address)
+//        conn, err := net.Dial(UDP, address)
+//        if err != nil {
+//            log.Error(err)
+//            conn.Close()
+//            continue
+//        }
+//        log.Lvlf3("Send block: %+v", block)
+//        buf, err := protobuf.Encode(block)
+//        if err != nil {
+//            log.Error(err)
+//            conn.Close()
+//            continue
+//        }
+//        conn.Write(buf)
+//        // conn.Read(buf)
+//        conn.Close()
+//    }
+//}
 
 func (s *Service) BroadcastAddressTx(addrTx *AddressMessage) {
     for _, peer := range s.peerStorage.peerNodeMap {
@@ -347,29 +342,60 @@ func (s *Service) BroadcastAddressTx(addrTx *AddressMessage) {
 }
 
 // New BlockChain
-func (s *Service) CreateGenesisBlock(req *lotmint.GenesisBlockRequest) (*bc.Block, error) {
+func (s *Service) CreateGenesisBlock(req *lotmint.GenesisBlockRequest) (*bc.NewLeaderHelloBlock, error) {
     s.createBlockChainMutex.Lock()
     defer s.createBlockChainMutex.Unlock()
     if s.db.GetLatest() != nil {
-        return nil, errors.New("You have already joined blockchain.")
+        return nil, errors.New("you have already joined blockchain")
     }
     genesisBlock := bc.GetGenesisBlock()
 
     // Store and broadcast block
     s.db.Store(genesisBlock)
     s.db.UpdateLatest(genesisBlock)
-    s.BroadcastBlock(genesisBlock, RefererBlock)
-
-    // Start local mining
+    s.BroadcastBlock(genesisBlock, NewLeaderHelloBlock)
     go s.startTimer(genesisBlock)
-
     return genesisBlock, nil
 }
 
+// BFT member group
+func (s *Service) bftMemberGroup(block *bc.NewLeaderHelloBlock)  {
+    defer s.proxyStorage.Unlock()
+    s.proxyStorage.Lock()
+    for _, addr := range block.Addresses {
+        si, err := utils.ConvertPeerURL(addr)
+        if err == nil {
+            log.Error(err)
+            continue
+        }
+        if _, ok := s.proxyStorage.peerNodeMap[si.Public.String()]; !ok {
+            s.proxyStorage.peerNodeMap[si.Public.String()] = si
+        }
+        err = s.SendRaw(si, &TunnelMessage{"Test tunnel Message"})
+        if err != nil {
+            log.Error(err)
+            continue
+        }
+    }
+    // 清理无用的Gateway
+    var deletionKey []string
+    for key, _ := range s.proxyStorage.peerNodeMap {
+        memberMap := s.getLatestPublicKeyMap()
+        if _, ok := memberMap[key]; !ok {
+            deletionKey = append(deletionKey, key)
+        }
+    }
+    for _, key := range deletionKey {
+        // TODO: 关闭Socket连接
+        delete(s.proxyStorage.peerNodeMap, key)
+    }
+}
+
 // Leader proposal at waiting for a while
-func (s *Service) startTimer(block *bc.Block) {
+func (s *Service) startTimer(block *bc.NewLeaderHelloBlock) {
+    go s.bftMemberGroup(block)
     go s.startMiner(block)
-    if !s.isLeader() {
+    if !s.isBFTMember() {
         return
     }
     if s.timerRunning {
@@ -378,20 +404,100 @@ func (s *Service) startTimer(block *bc.Block) {
     }
     s.timerRunning = true
     select {
-    // instead of 2Delta
+    // Phi + 2Delta
     case <-time.After(60 * time.Second):
+        // Notify stop local mining
+        s.stopMiner()
         s.timerRunning = false
     }
     log.Lvlf3("timer finished (%s)", time.Now().Format("Mon Jan 2 15:04:05 -0700 MST 2006"))
 
-    // Notify stop local mining
-    s.stopMiner()
-
-    if !s.isLeader() {
+    if !s.isBFTMember() {
         return
     }
 
-    s.proposalChan <- true
+    // BFT members broadcast signed miner block
+    go func() {
+        if len(block.Addresses) == 0 {
+            log.Error("No active gateway")
+            return
+        }
+        if s.blockBuffer.Len() == 0 {
+            log.Warn("No candidate blocks: reset again")
+            go s.startTimer(block)
+            return
+        }
+        for _, addr := range block.Addresses {
+            si, err := utils.ConvertPeerURL(addr)
+	    if err != nil {
+                log.Errorf("%s: %v", addr, err)
+	    } else {
+                if err := s.SendRaw(si, &ProxyRequest{s.blockBuffer.List()}); err != nil {
+                    log.Errorf("%s: %v", addr, err)
+                }
+            }
+        }
+    }()
+    if s.isLeader() {
+        // DeFork: Phi + 3Delta
+        select {
+        // instead of Delta
+        case <-time.After(30 * time.Second):
+        }
+        latest := s.db.GetLatest()
+        if latest == nil {
+            log.Error("Blockchain no active")
+            return
+        }
+	memberLen := uint64(COSI_MEMBERS)
+        if latest.Index < memberLen {
+            memberLen = latest.Index
+        }
+        blocks := s.blockBuffer.HalfMore(memberLen)
+        if len(blocks) == 0 {
+            log.Warn("No candidate blocks: reset again")
+        } else {
+            deForkBlock := bc.NewDeForkBlock(blocks)
+            s.BroadcastBlock(deForkBlock, RefererBlock)
+            go s.startNewLeaderHelloBlock(deForkBlock)
+        }
+    }
+
+    //s.proposalChan <- true
+}
+
+func (s *Service) startNewLeaderHelloBlock(block *bc.DeForkBlock) {
+    leaderBlock := block.OrderBlocks[0]
+    if leaderBlock.PublicKey != s.publicKey() {
+        return
+    }
+    log.Info("Prepare NewLeaderHelloBlock.")
+    latest := s.db.GetLatest()
+    if latest == nil {
+        log.Error("Blockchain no active")
+        return
+    }
+    select {
+    // instead of Delta
+    case <-time.After(30 * time.Second):
+        tmpBlock := latest.Copy()
+        tmpBlock.Index += 1
+        tmpBlock.Timestamp = getCurrentTimestamp()
+        copy(tmpBlock.PrevBlock, tmpBlock.Hash)
+        tmpBlock.PublicKey = leaderBlock.PublicKey
+        tmpBlock.Block = block
+        // TODO: update gateway addresses and append transactions
+        hash, err := tmpBlock.CalculateHash()
+        if err != nil {
+            log.Error(err.Error())
+            return
+        }
+        copy(tmpBlock.Hash, hash)
+        s.db.Store(tmpBlock)
+        s.db.UpdateLatest(tmpBlock)
+        s.BroadcastBlock(tmpBlock, NewLeaderHelloBlock)
+        go s.startTimer(tmpBlock)
+    }
 }
 
 func (s *Service) handleSignatureRequest(env *network.Envelope) error {
@@ -402,23 +508,12 @@ func (s *Service) handleSignatureRequest(env *network.Envelope) error {
     log.Lvl3("req:", req)
     latest := s.db.GetLatest()
     if latest == nil {
-        return xerrors.New("Blockchain not actived")
+        return xerrors.New("Blockchain no active")
     }
-
-    blockMap := make(map[string]*bc.Block)
-    for _, ob := range req.Block.OrderBlocks {
-        blockMap[ob.PublicKey] = ob
+    for _, block := range req.Blocks {
+        s.blockBuffer.Set(block)
     }
-
-    omitBlocks := make(map[string]*bc.Block)
-    blocks := s.blockBuffer.Choice()
-    for _, block := range blocks {
-        if b, ok := blockMap[block.PublicKey]; !ok {
-            omitBlocks[b.PublicKey] = b
-        }
-    }
-
-    return s.SendRaw(env.ServerIdentity, SignatureResponse{s.publicKey(), omitBlocks})
+    return nil
 }
 
 func (s *Service) handleSignatureResponse(env *network.Envelope) error {
@@ -436,89 +531,24 @@ func (s *Service) handleSignatureResponse(env *network.Envelope) error {
 func (s *Service) handleProxyRequest(env *network.Envelope) error {
     req, ok := env.Msg.(*ProxyRequest)
     if !ok {
-        return xerrors.Errorf("%v failed to cast to ProxyRequest", s.ServerIdentity())
+        return xerrors.Errorf("%v failed to cast to ProxyRequest", env.ServerIdentity)
     }
     log.Lvl3("req:", req)
-    if req.Block == nil {
-        return xerrors.New("ProxyRequest block is nil")
+    if req.Blocks == nil {
+        return xerrors.New("ProxyRequest blocks is nil")
     }
-    latestBlock := s.db.GetLatest()
-    if latestBlock == nil {
-        return xerrors.New("Blockchain not actived")
-    }
-
-    tmpBlock := latestBlock.Copy()
-
-    memberMap := make(map[string]bool)
-    for i := 0; i < COSI_MEMBERS; i++ {
-        memberMap[tmpBlock.PublicKey] = true
-        if tmpBlock.PrevBlock == nil {
-            break
-        }
-        tmpBlock := s.db.GetByID(BlockID(tmpBlock.PrevBlock))
-        if tmpBlock == nil {
-            return xerrors.New("Incomplete local blockchain")
-        }
-    }
-
-    success := 0
-    wg := sync.WaitGroup{}
-    var errs []error
+    memberMap := s.getLatestPublicKeyMap()
     for key, _ := range memberMap {
-        if peer, ok := s.peerStorage.peerNodeMap[key]; ok {
-            success++
-            name := peer.Address.String()
-            wg.Add(1)
-            go func() {
-               if err := s.SendRaw(peer, &SignatureRequest{req.Block}); err != nil {
-                   errs = append(errs, xerrors.Errorf("%s: %v", name, err))
-               }
-               wg.Done()
-            }()
-        }
-    }
-    wg.Wait()
-
-    if len(errs) > 0 {
-        log.Error(errs)
-    }
-
-    responses := make(map[string]map[string]*bc.Block)
-    done := len(errs)
-    for done < success {
-        select {
-        case reply := <-s.signatureResponseChan:
-            responses[reply.PublicKey] = reply.BlockMap
-            done++
-        case <-time.After(5):
-            log.Lvlf3("timeout waiting for all followers response: %v", s.ServerIdentity())
-			done = success
-        }
-    }
-
-    // TODO: Count followers blocks and fill into OrderBlocks
-    blockCountMap := make(map[string]int)
-    blockMap := make(map[string]*bc.Block)
-    for _, resp := range responses {
-        for key, res := range resp {
-            if _, ok := blockCountMap[key]; !ok {
-                blockCountMap[key] = 0
-                blockMap[key] = res
+        if peer, ok := s.proxyStorage.peerNodeMap[key]; ok {
+            if env.ServerIdentity.Public.String() == peer.Public.String() {
+                continue
             }
-            blockCountMap[key] += 1
+            if err := s.SendRaw(peer, &SignatureRequest{req.Blocks}); err != nil {
+                log.Errorf("%s: %v", peer.Address.String(), err)
+            }
         }
     }
-
-    var omitBlocks map[string]*bc.Block
-    for key, val := range blockCountMap {
-        block, found := blockMap[key]
-        if val >= 2 * len(responses) / 3 && found {
-            omitBlocks[key] = block
-        }
-    }
-
-    // ProxyResponse Message
-    return s.SendRaw(env.ServerIdentity, ProxyResponse{env.ServerIdentity.Public.String(), omitBlocks})
+    return nil
 }
 
 func (s *Service) handleProxyResponse(env *network.Envelope) error {
@@ -533,7 +563,7 @@ func (s *Service) handleProxyResponse(env *network.Envelope) error {
     return nil
 }
 
-func (s *Service) GetBlockByID(req *lotmint.BlockByIDRequest) (*bc.Block, error) {
+func (s *Service) GetBlockByID(req *lotmint.BlockByIDRequest) (*bc.NewLeaderHelloBlock, error) {
     s.createBlockChainMutex.Lock()
     defer s.createBlockChainMutex.Unlock()
     block := s.db.GetLatest()
@@ -547,7 +577,7 @@ func (s *Service) GetBlockByID(req *lotmint.BlockByIDRequest) (*bc.Block, error)
     return block, nil
 }
 
-func (s *Service) GetBlockByIndex(req *lotmint.BlockByIndexRequest) (*bc.Block, error) {
+func (s *Service) GetBlockByIndex(req *lotmint.BlockByIndexRequest) (*bc.NewLeaderHelloBlock, error) {
     s.createBlockChainMutex.Lock()
     defer s.createBlockChainMutex.Unlock()
 
@@ -572,7 +602,7 @@ func (s *Service) GetBlockByIndex(req *lotmint.BlockByIndexRequest) (*bc.Block, 
 
 }
 
-func (s *Service) GetLatestBlock(req *lotmint.BlockLatestRequest) (*bc.Block, error) {
+func (s *Service) GetLatestBlock(req *lotmint.BlockLatestRequest) (*bc.NewLeaderHelloBlock, error) {
     s.createBlockChainMutex.Lock()
     defer s.createBlockChainMutex.Unlock()
     latest := s.db.GetLatest()
@@ -613,7 +643,7 @@ func (s *Service) save() {
     // Save proxies data
     s.proxyStorage.Lock()
     defer s.proxyStorage.Unlock()
-    err = s.Save(proxyStorageID, s.proxyStorage)
+    err = s.Save(addressID, s.addressMap)
     if err != nil {
         log.Error("Couldn't save proxy data:", err)
     }
@@ -626,13 +656,13 @@ func (s *Service) handshake() {
     go s.processMessage(len(s.peerStorage.peerNodeMap))
     for _, peerNode := range s.peerStorage.peerNodeMap {
         err := s.SendRaw(peerNode, &HandshakeMessage{
-	    GenesisID: s.db.GetGenesisID(),
-	    LatestBlock: s.db.GetLatest(),
-	    Answer: true,
-	})
-	if err != nil {
+            GenesisID: s.db.GetGenesisID(),
+            LatestBlock: s.db.GetLatest(),
+            Answer: true,
+	    })
+	    if err != nil {
             log.Warn(err)
-	}
+	    }
     }
 }
 
@@ -663,19 +693,18 @@ func (s *Service) tryLoad() error {
         if !ok {
            return errors.New("Peer data of wrong type")
         }
-    } else {
     }
 
     // Load proxies data
-    msg, err = s.Load(proxyStorageID)
+    msg, err = s.Load(addressID)
     if err != nil {
         return err
     }
     if msg != nil {
         //s.proxyStorage = &peerStorage{}
-        s.proxyStorage, ok = msg.(*peerStorage)
+        s.addressMap, ok = msg.(map[string]bool)
         if !ok {
-           return errors.New("Proxy data of wrong type")
+           return errors.New("address data of wrong type")
         }
     }
 
@@ -691,8 +720,25 @@ func (s *Service) publicKey() string {
 func (s *Service) isLeader() bool {
     latest := s.db.GetLatest()
     if latest != nil {
-        log.Lvlf3("BlockchanKey: %s, PublicKey: %s", latest.PublicKey, s.publicKey())
-        return latest.PublicKey == s.publicKey()
+        blocks := latest.Block.OrderBlocks
+        if len(blocks) == 0 {
+            return false
+        }
+        log.Lvlf3("LatestPublicKey: %s, SelfPublicKey: %s", blocks[0].PublicKey, s.publicKey())
+        return blocks[0].PublicKey == s.publicKey()
+    }
+    return false
+}
+
+func (s *Service) isBFTMember() bool {
+    pointer := s.db.GetLatest()
+    count := COSI_MEMBERS
+    for pointer != nil && count > 0 {
+        if pointer.PublicKey == s.publicKey() {
+            return true
+        }
+        count--
+        pointer = s.db.GetByID(BlockID(pointer.PrevBlock))
     }
     return false
 }
@@ -704,7 +750,7 @@ func (s *Service) AddPeerServerIdentity(peers []*network.ServerIdentity, needCon
 	    // Self ServerIdentity
         // s.ServerIdentity()
 	    if needConn {
-	        err := s.SendRaw(peer, &ServiceMessage{"Test Service Message"})
+	        err := s.SendRaw(peer, &PingMessage{"Ping Message"})
 	        if err != nil {
                 log.Error(err)
                 continue
@@ -736,55 +782,55 @@ func (s *Service) processMessage(n int) {
         count := 0
         for count < n {
             select {
-	    case remote := <-s.synChan:
+	        case remote := <-s.synChan:
                 latestBlock := s.db.GetLatest()
-	        if latestBlock == nil || remote.Index > latestBlock.Index {
-		    remotes = append(remotes, remote)
-	        }
-	        count++
+                if latestBlock == nil || remote.Index > latestBlock.Index {
+                    remotes = append(remotes, remote)
+                }
+	            count++
             case <-time.After(5 * time.Second):
-	        return
-	    }
+	            return
+	        }
         }
     }()
     wg.Wait()
     if len(remotes) == 0 {
         s.synDone = true
     } else {
-	for len(remotes) > 0 {
-            start := 0
-	    randIndex := rand.Intn(len(remotes))
+	    for len(remotes) > 0 {
+            start := uint64(0)
+	        randIndex := rand.Intn(len(remotes))
             remote := remotes[randIndex]
             latestBlock := s.db.GetLatest()
             if latestBlock != nil {
                 start = latestBlock.Index
             }
-            size := MAX_BLOCK_PERONCE
+            size := uint64(MAX_BLOCK_PERONCE)
             if remote.Index < size {
                 size = remote.Index
             }
             err := s.SendRaw(remote.ServerIdentity, &DownloadBlockRequest{
-	        GenesisID: s.db.GetGenesisID(),
-	        Start: start,
-	        Size: size,
+                GenesisID: s.db.GetGenesisID(),
+                Start: start,
+                Size: size,
             })
-	    if err == nil {
+	        if err == nil {
                 break
-	    }
+	        }
             remotes = append(remotes[:randIndex], remotes[randIndex+1:]...)
-	}
-	if len(remotes) == 0 {
+	    }
+	    if len(remotes) == 0 {
             log.Error("failed to connect all remote servers, retrying")
             s.handshake()
-	}
+	    }
     }
 }
 
-func (s *Service) runProposal() {
+/*func (s *Service) runProposal() {
     log.Info("Leader starting to refer block")
     latest := s.db.GetLatest()
     if latest == nil {
-        log.Error("Blockchain not actived")
+        log.Error("Blockchain no active")
         return
     }
     if len(latest.Addresses) == 0 {
@@ -865,13 +911,13 @@ func (s *Service) runProposal() {
     log.Info("Leader finished to refer block")
     // Start local mining
     go s.startTimer(proposalBlock)
-}
+}*/
 
 func (s *Service) mainLoop() {
     for {
         select {
 	    case <-s.proposalChan:
-	        go s.runProposal()
+	        //go s.runProposal()
 	    }
     }
 }
@@ -885,7 +931,7 @@ func (s *Service) handleHandshakeMessage(env *network.Envelope) error {
     genesisID := s.db.GetGenesisID()
     if genesisID == nil {
         if req.GenesisID == nil || req.LatestBlock == nil {
-	    log.Warn("neither local nor remote chain started")
+	        log.Warn("neither local nor remote chain started")
             return nil
         }
     } else {
@@ -900,31 +946,31 @@ func (s *Service) handleHandshakeMessage(env *network.Envelope) error {
             return nil
         }
         if req.Answer && (req.GenesisID == nil || latestBlock.Index > req.LatestBlock.Index) {
-	    err := s.SendRaw(env.ServerIdentity, &HandshakeMessage{
-	        GenesisID: s.db.GetGenesisID(),
-	        LatestBlock: latestBlock,
-	        Answer: false,
-	    })
-	    if err != nil {
-	        log.Warn(err)
-	    }
+            err := s.SendRaw(env.ServerIdentity, &HandshakeMessage{
+                GenesisID: s.db.GetGenesisID(),
+                LatestBlock: latestBlock,
+                Answer: false,
+            })
+            if err != nil {
+                log.Warn(err)
+            }
         }
-	if (req.GenesisID == nil || req.LatestBlock == nil) {
-	    log.Warn("the remote block is empty(skip)")
-            return nil
-	}
+        if (req.GenesisID == nil || req.LatestBlock == nil) {
+            log.Warn("the remote block is empty(skip)")
+                return nil
+        }
     }
     s.synChan <- RemoteServerIndex{
         Index: req.LatestBlock.Index,
-	ServerIdentity: env.ServerIdentity,
+        ServerIdentity: env.ServerIdentity,
     }
     return nil
 }
 
-// handleMessageReq messages.
-func (s *Service) handleMessageReq(env *network.Envelope) error {
+// handlePingMessage messages.
+func (s *Service) handlePingMessage(env *network.Envelope) error {
     // Parse message.
-    req, ok := env.Msg.(*ServiceMessage)
+    req, ok := env.Msg.(*PingMessage)
     if !ok {
         return xerrors.Errorf("%v failed to cast to MessageReq", s.ServerIdentity())
     }
@@ -933,22 +979,62 @@ func (s *Service) handleMessageReq(env *network.Envelope) error {
     return nil
 }
 
+// handleTunnelMessage messages.
+func (s *Service) handleTunnelMessage(env *network.Envelope) error {
+    // Parse message.
+    req, ok := env.Msg.(*TunnelMessage)
+    if !ok {
+        return xerrors.Errorf("%v failed to cast to MessageReq", env.ServerIdentity)
+    }
+    log.Lvl3("req:", req)
+    s.proxyStorage.peerNodeMap[env.ServerIdentity.Public.String()] = env.ServerIdentity
+    return nil
+}
+
 // handleAddressMessage
 func (s *Service) handleAddressMessage(env *network.Envelope) error {
     req, ok := env.Msg.(*AddressMessage)
     if !ok {
-        return xerrors.Errorf("%v failed to cast to AddressMessage", s.ServerIdentity())
+        return xerrors.Errorf("%v failed to cast to AddressMessage", env.ServerIdentity)
     }
     log.Lvl3("req:", req)
-    if req.Address != nil {
-	    if _, ok := s.proxyStorage.peerNodeMap[req.Address.String()]; !ok {
-	        s.proxyStorage.peerNodeMap[req.Address.String()] = req.Address
+    var peerNodes []string
+    if len(req.Addresses) > 0 {
+	    for _, addr := range req.Addresses {
+	        if _, ok = s.addressMap[addr]; !ok {
+                s.addressMap[addr] = true
+                peerNodes = append(peerNodes, addr)
+            }
         }
-        s.BroadcastAddressTx(&AddressMessage{
-            Address: req.Address,
-        })
+        if len(peerNodes) > 0 {
+            s.BroadcastAddressTx(&AddressMessage{
+                Addresses: peerNodes,
+            })
+        }
     }
     return nil
+}
+
+func (s *Service) getLatestPublicKeyMap() map[string]bool {
+    memberMap := make(map[string]bool)
+    latestBlock := s.db.GetLatest()
+    if latestBlock == nil {
+        log.Error("blockchain not active")
+        return memberMap
+    }
+    tmpBlock := latestBlock.Copy()
+    for i := 0; i < COSI_MEMBERS; i++ {
+        memberMap[tmpBlock.PublicKey] = true
+        if len(tmpBlock.PrevBlock) == 0 {
+            break
+        }
+        tmpBlock := s.db.GetByID(BlockID(tmpBlock.PrevBlock))
+        if tmpBlock == nil {
+            log.Error("Incomplete local blockchain")
+            break
+        }
+    }
+    return memberMap
 }
 
 // handleBlockMessage
@@ -958,18 +1044,17 @@ func (s *Service) handleBlockMessage(env *network.Envelope) error {
         return xerrors.Errorf("%v failed to cast to BlockMessage", s.ServerIdentity())
     }
     log.Lvl3("req:", req)
-    block := req.Block
-    if block == nil {
+    if req.Block == nil {
         return xerrors.New("Block could no be empty")
     }
     // TODO: Check block validation
     // Drop block if it is greater than delta+phi
-    if s.db.GetLatest() != nil && block.Index > 0 {
+    /*if s.db.GetLatest() != nil && block.Index > 0 {
         if s.preTimestamp > 0 && s.delta > 0 && req.Block.Timestamp > s.preTimestamp + s.delta + PHI {
             log.Warnf("block timeout: %v", req.Block)
             return xerrors.Errorf("block timeout: %v", req.Block)
         }
-    }
+    }*/
     switch req.Type {
         // Deprecate: instead of udp
         /*case ProxyCandidateBlock:
@@ -984,9 +1069,36 @@ func (s *Service) handleBlockMessage(env *network.Envelope) error {
                 return err
             }*/
         case CandidateBlock:
-            // Add block into blockBuffer
-            s.blockBuffer.Append(block)
+            block := req.Block.(*bc.Block)
+            // Inner 2delta
+            if s.timerRunning {
+                if !s.blockBuffer.in(block.Hash) {
+                    // Add block into blockBuffer
+                    signBlock := block.Copy()
+		    signBlock.Sign(s.publicKey())
+                    s.blockBuffer.Put(signBlock)
+                    go s.BroadcastBlock(block, req.Type)
+                }
+            }
         case RefererBlock:
+            block := req.Block.(*bc.DeForkBlock)
+            if s.deForkBlock == nil || !bytes.Equal(s.deForkBlock.Hash, block.Hash) {
+                //s.preTimestamp = getCurrentTimestamp()
+                ds, err := s.calcDelta()
+                if err == nil {
+                    s.ds = ds
+                } else {
+                    log.Warn(err)
+                }
+                s.deForkBlock = block
+                go s.BroadcastBlock(block, req.Type)
+                if s.isLeader() {
+                    go s.startNewLeaderHelloBlock(block)
+                }
+            }
+        case NewLeaderHelloBlock:
+            s.deForkBlock = nil
+            block := req.Block.(*bc.NewLeaderHelloBlock)
             _block := s.db.GetByID(block.Hash)
             if _block != nil {
                 log.Infof("Block '%d' already exists", block.Hash)
@@ -1008,7 +1120,6 @@ func (s *Service) handleBlockMessage(env *network.Envelope) error {
             } else {
                 log.Warn(err)
 	        }*/
-	        s.preTimestamp = getCurrentTimestamp()
 
             // Add referer block into refererBlocks
 	        // s.db.AppendRefererBlock(block)
@@ -1018,9 +1129,9 @@ func (s *Service) handleBlockMessage(env *network.Envelope) error {
             go s.BroadcastBlock(block, req.Type)
             go s.startTimer(block)
     case TxBlock:
-        s.db.Store(block)
+        /*s.db.Store(block)
         s.BroadcastBlock(block, req.Type)
-        s.db.UpdateLatest(block)
+        s.db.UpdateLatest(block)*/
     default:
         return xerrors.Errorf("type '%d' not handled", req.Type)
     }
@@ -1036,15 +1147,15 @@ func (s *Service) handleDownloadBlockRequest(env *network.Envelope) error {
     log.Lvl3("req:", req)
     genesisID := s.db.GetGenesisID()
     if bytes.Compare(req.GenesisID, genesisID) != 0 {
-	log.Error("no genesis block found")
+	    log.Error("no genesis block found")
         return nil
     }
-    var blocks []*bc.Block
+    var blocks []*bc.NewLeaderHelloBlock
     for index := req.Start; index < req.Size; index++ {
-	block, err := s.db.GetBlockByIndex(index)
-	if err != nil {
+	    block, err := s.db.GetBlockByIndex(index)
+	    if err != nil {
             break
-	}
+	    }
         blocks = append(blocks, block.Copy())
     }
     if len(blocks) == 0 {
@@ -1068,7 +1179,7 @@ func (s *Service) handleDownloadBlockResponse(env *network.Envelope) error {
 	log.Error("no genesis block found")
         return nil
     }
-    index := -1
+    index := uint64(0)
     for _, block := range req.Blocks {
 	block, _ := s.db.GetBlockByIndex(block.Index)
 	if block != nil {
@@ -1086,51 +1197,51 @@ func (s *Service) handleDownloadBlockResponse(env *network.Envelope) error {
     return nil
 }
 
-func (s *Service) handleUDPRequest() {
-    for {
-        buf := make([]byte, UDP_BUFFER_SIZE)
-        length, cAddr, err := s.udpConn.ReadFromUDP(buf)
-        if err != nil {
-            log.Error(err)
-            continue
-        }
-        log.Infof("Receive [%d] from %s", length, cAddr)
-        block := bc.NewBlock()
-        err = protobuf.DecodeWithConstructors(buf[:length], block, network.DefaultConstructors(cothority.Suite))
-        //err = protobuf.DecodeWithConstructors(buf, block, nil)
-		if err != nil {
-            log.Error(err)
-            continue
-		}
-        log.Infof("Receive block: %+v", block)
+//func (s *Service) handleUDPRequest() {
+//    for {
+//        buf := make([]byte, UDP_BUFFER_SIZE)
+//        length, cAddr, err := s.udpConn.ReadFromUDP(buf)
+//        if err != nil {
+//            log.Error(err)
+//            continue
+//        }
+//        log.Infof("Receive [%d] from %s", length, cAddr)
+//        block := bc.NewBlock()
+//        err = protobuf.DecodeWithConstructors(buf[:length], block, network.DefaultConstructors(cothority.Suite))
+//        //err = protobuf.DecodeWithConstructors(buf, block, nil)
+//		if err != nil {
+//            log.Error(err)
+//            continue
+//		}
+//        log.Infof("Receive block: %+v", block)
+//
+//        /*s.udpConn.WriteToUDP([]byte(), cAddr)
+//        if err != nil {
+//            log.Error(err)
+//            return
+//        }*/
+//        // TODO: Broadcast to all BFT members
+//        go s.broadcastBlockToBFT(block)
+//    }
+//    defer s.udpConn.Close()
+//}
 
-        /*s.udpConn.WriteToUDP([]byte(), cAddr)
-        if err != nil {
-            log.Error(err)
-            return
-        }*/
-        // TODO: Broadcast to all BFT members
-        go s.broadcastBlockToBFT(block)
-    }
-    defer s.udpConn.Close()
-}
-
-func (s *Service) startUDPServer() error {
-    // Starting UDP Server for client puzzle
-    address := ":" + s.ServerIdentity().Address.Port()
-    log.Infof("Starting udp server on address udp://0.0.0.0%s", address)
-    udpAddr, _ := net.ResolveUDPAddr(UDP, address)
-    udpConn, err := net.ListenUDP(UDP, udpAddr)
-    if err != nil {
-        log.Error(err)
-        return err
-    }
-
-    s.udpConn = udpConn
-    go s.handleUDPRequest()
-
-    return nil
-}
+//func (s *Service) startUDPServer() error {
+//    // Starting UDP Server for client puzzle
+//    address := ":" + s.ServerIdentity().Address.Port()
+//    log.Infof("Starting udp server on address udp://0.0.0.0%s", address)
+//    udpAddr, _ := net.ResolveUDPAddr(UDP, address)
+//    udpConn, err := net.ListenUDP(UDP, udpAddr)
+//    if err != nil {
+//        log.Error(err)
+//        return err
+//    }
+//
+//    s.udpConn = udpConn
+//    go s.handleUDPRequest()
+//
+//    return nil
+//}
 
 // newService receives the context that holds information about the node it's
 // running on. Saving and loading can be done using the context. The data will
@@ -1148,20 +1259,21 @@ func newService(c *onet.Context) (onet.Service, error) {
 	    proxyStorage: &peerStorage{
             peerNodeMap: make(map[string]*network.ServerIdentity),
         },
+        addressMap: make(map[string]bool),
 	    synChan: make(chan RemoteServerIndex, 1),
 	    synDone: false,
 	    proposalChan: make(chan bool, 1),
 	    closeChan: make(chan bool, 1),
 	    privateClock: newPrivateClock(COSI_MEMBERS),
-	    delta: DEFAULT_DELTA,
+	    ds: DEFAULT_DS,
 	    timerRunning: false,
 	    proxyResponseChan: make(chan ProxyResponse),
 	    signatureResponseChan: make(chan SignatureResponse),
     }
-    if err := s.startUDPServer(); err != nil {
+    /*if err := s.startUDPServer(); err != nil {
         log.Error(err)
         return nil, err
-    }
+    }*/
     s.miner = mining.New(s.minerCallback)
     if err := s.db.BuildIndex(); err != nil {
         log.Error(err)
@@ -1171,14 +1283,15 @@ func newService(c *onet.Context) (onet.Service, error) {
         return nil, errors.New("Couldn't register handlers")
     }
     if err := s.RegisterHandlers(s.Peer, s.Proxy, s.CreateGenesisBlock, s.GetBlockByID, s.GetBlockByIndex); err != nil {
-        return nil, errors.New("Couldn't register handlers")
+        return nil, errors.New("couldn't register handlers")
     }
     if err := s.RegisterHandler(s.GetLatestBlock); err != nil {
         return nil, errors.New("Couldn't register handlers")
     }
     // s.ServiceProcessor.RegisterStatusReporter("BlockDB", s.db)
     s.RegisterProcessorFunc(handshakeMessageId, s.handleHandshakeMessage)
-    s.RegisterProcessorFunc(serviceMessageId, s.handleMessageReq)
+    s.RegisterProcessorFunc(pingMessageId, s.handlePingMessage)
+    s.RegisterProcessorFunc(tunnelMessageId, s.handleTunnelMessage)
     s.RegisterProcessorFunc(blockMessageId, s.handleBlockMessage)
     s.RegisterProcessorFunc(blockDownloadRequestId, s.handleDownloadBlockRequest)
     s.RegisterProcessorFunc(blockDownloadResponseId, s.handleDownloadBlockResponse)
@@ -1198,11 +1311,16 @@ func newService(c *onet.Context) (onet.Service, error) {
     return s, nil
 }
 
-func (s *Service) startMiner(block *bc.Block) {
+func (s *Service) startMiner(block *bc.NewLeaderHelloBlock) {
+    powBlocks := block.Block.OrderBlocks
+    if len(powBlocks) == 0 {
+        log.Error("No valid pow blocks.")
+        return
+    }
     templateBlock := bc.NewBlock()
-    templateBlock.BlockHeader = block.BlockHeader.Copy()
+    templateBlock.BlockHeader = powBlocks[0].BlockHeader.Copy()
     copy(templateBlock.PrevBlock, block.Hash)
-    var addrKey []string
+    /*var addrKey []string
     for key, _ := range s.proxyStorage.peerNodeMap {
         addrKey = append(addrKey, key)
     }
@@ -1212,7 +1330,7 @@ func (s *Service) startMiner(block *bc.Block) {
         templateBlock.Addresses = append(templateBlock.Addresses, s.proxyStorage.peerNodeMap[addrKey[index]])
         addrKey = append(addrKey[:index], addrKey[index+1:]...)
         n--
-    }
+    }*/
     s.miner.Start(templateBlock)
 }
 
@@ -1221,19 +1339,5 @@ func (s *Service) stopMiner() {
 }
 
 func (s *Service) minerCallback(block *bc.Block) {
-    // TODO: abort mined block if after 2Delta
-
-    // Deprecated: Genesis block
-    if s.db.GetLatest() == nil {
-        if block.Index > 0 {
-            panic("Local status out of sync")
-        }
-        // TODO: Signature and broadcast
-        s.db.Store(block)
-        s.db.UpdateLatest(block)
-        s.BroadcastBlock(block, RefererBlock)
-    } else {
-        // Send miner block into leader gateways
-        s.BroadcastBlockToProxies(block)
-    }
+    s.BroadcastBlock(block, CandidateBlock)
 }

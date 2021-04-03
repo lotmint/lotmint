@@ -52,11 +52,18 @@ type Peer struct {
     PeerNodes []*network.ServerIdentity
 }
 
-type Proxy Peer
+type Proxy struct {
+    Command string
+    PeerNodes []string
+}
 
 // PeerReply returns the operation status
 type PeerReply struct {
     List []*network.ServerIdentity
+}
+
+type ProxyReply struct {
+    List []string
 }
 
 type GenesisBlockRequest struct {
@@ -67,7 +74,7 @@ type BlockByIDRequest struct {
 }
 
 type BlockByIndexRequest struct {
-    Value int
+    Value uint64
 }
 
 type BlockLatestRequest struct {}

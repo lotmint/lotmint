@@ -4,6 +4,7 @@ go 1.14
 
 require (
 	github.com/BurntSushi/toml v0.3.1
+	github.com/beevik/ntp v0.3.0
 	github.com/stretchr/testify v1.5.1
 	github.com/urfave/cli v1.22.3
 	go.dedis.ch/cothority/v3 v3.4.5

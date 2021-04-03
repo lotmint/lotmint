@@ -1,9 +1,9 @@
 package blockchain
 
 import (
-    "lotmint/utils"
+    //"lotmint/utils"
 
-    "go.dedis.ch/onet/v3/network"
+    //"go.dedis.ch/onet/v3/network"
 )
 
 
@@ -29,31 +29,49 @@ var genesisAddresses = [...]string{
     "tls://b2aa3a0faf75e5b09f048a30361a41d380c999531dd64123ba699fa4b9bcdcb7@127.0.0.1:7770",
 }
 
-func GetGenesisBlock() *Block{
-    var addresses []*network.ServerIdentity
+func GetGenesisBlock() *NewLeaderHelloBlock {
+    //var addresses []*network.ServerIdentity
+    var addresses []string
     for _, address := range genesisAddresses {
-        si, err := utils.ConvertPeerURL(address)
+        /*si, err := utils.ConvertPeerURL(address)
         if err != nil {
+	    panic(err)
         }
-        addresses = append(addresses, si)
+        addresses = append(addresses, si)*/
+        addresses = append(addresses, address)
     }
     // genesisBlock defines the genesis block of the block chain which serves as the
     // public transaction ledger for the main network.
-    var genesisBlock = &Block{
-        BlockHeader: &BlockHeader{
-                Index:		0,
+    blocks := []*Block{
+        {
+            BlockHeader: &BlockHeader{
                 Version:	1,
                 Bits:		DEFAULT_BITS,
                 Nonce:		0x1343d72,	// 20200818
                 PrevBlock:	BlockID{},	// 0000000000000000000000000000000000000000000000000000000000000000
                 Timestamp:	1597680000,	// 2020-08-18
-                MerkleRoot:	genesisMerkleRoot,
                 PublicKey:  "b2aa3a0faf75e5b09f048a30361a41d380c999531dd64123ba699fa4b9bcdcb7",
-                Addresses:  addresses,
                 Data:		make([]byte, 0),
             },
             Hash:		genesisHash,
-            Transactions:	make([]*Transaction, 0),
+            Collections:	make([]*Collection, 0),
+        },
     }
+
+    genesisBlock := &NewLeaderHelloBlock{
+        Index: 0,
+        Version: 1,
+        Timestamp:	1597680000,	// 2020-08-18
+        PrevBlock:	BlockID{},
+        MerkleRoot:	genesisMerkleRoot,
+        Hash:		genesisHash,
+        Block: &DeForkBlock{
+            Timestamp:	1597680000,	// 2020-08-18
+            OrderBlocks: blocks,
+        },
+        Addresses:  addresses,
+        Transactions: make([]*Transaction, 0),
+    }
+
     return genesisBlock
 }

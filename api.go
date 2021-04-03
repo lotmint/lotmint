@@ -91,7 +91,7 @@ func (c *Client) GetBlockByID(r *onet.Roster, blockID bc.BlockID) (*bc.Block, er
     return reply, nil
 }
 
-func (c *Client) GetBlockByIndex(r *onet.Roster, blockIndex int) (*bc.Block, error) {
+func (c *Client) GetBlockByIndex(r *onet.Roster, blockIndex uint64) (*bc.Block, error) {
     dst := r.RandomServerIdentity()
     log.Lvl4("Sending message to", dst)
     reply := &bc.Block{}
